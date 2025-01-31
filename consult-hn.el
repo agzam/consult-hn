@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: search extensions
 ;; Homepage: https://github.com/agzam/consult-hn
-;; Package-Requires: ((emacs "29") (consult "2.0"))
+;; Package-Requires: ((emacs "29.4") (consult "2.0"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -20,6 +20,7 @@
 ;;; Code:
 
 (require 'consult)
+(require 'subr-x)
 
 (defgroup consult-hn nil
   "Group for consult-hn package."
@@ -32,7 +33,13 @@
   :group 'consult-hn)
 
 (defvar consult-hn--api-allowed-keys
-  '(query tags numericFilters page hitsPerPage restrictSearchableAttributes)
+  '(query
+    tags
+    numericFilters
+    page
+    hitsPerPage
+    typoTolerance
+    restrictSearchableAttributes)
   "Valid fields for HN Algolia API.")
 
 (defun consult-hn--fill-string (str &optional width justify)
@@ -56,23 +63,26 @@ string."
                   collect (intern (substring (symbol-name key) 1))
                   and collect value)))
 
-(defun consult-hn--params->alist (params-str)
-  "Parse PARAMS-STR like 'foo=bar zap=zop tags=(tag1,tag2)' into alist."
-  (thread-last
-    params-str
-    split-string-and-unquote
-    (seq-map (lambda (x)
-               (let ((p (split-string x "=")))
-                 (list (intern (car p)) (cadr p)))))))
+(defun consult-hn--normalize-input (input)
+  "Turn INPUT into a proper query string."
+  (when (and input (not (string-blank-p input)))
+    (let* ((split (consult--command-split input))
+           (params (thread-last
+                     (cdr-safe split)
+                     (seq-map (lambda (x)
+                                (let ((p (split-string x "=")))
+                                  (list (intern (car p)) (cadr p)))))
+                     (seq-union consult-hn-default-search-params)
+                     (seq-filter (lambda (x)
+                                   (member (car x) consult-hn--api-allowed-keys)))))
+           (_ (setf (alist-get 'query params)
+                    (list (url-encode-url (car-safe split)))))
+           (params (cl-remove-duplicates params :key #'car)))
+      (url-build-query-string params))))
 
 (defun consult-hn--fetch (input cb)
-  (let* ((params '((tags "comment,author_iLemming")
-                   (typoTolerance false)))
-         (_ (setf (alist-get 'query params)
-                  (list (url-encode-url input))))
-         (query-string (url-build-query-string params))
-         (search-url (format "https://hn.algolia.com/api/v1/search_by_date?%s"
-                             query-string))
+  (let* ((search-url (format "https://hn.algolia.com/api/v1/search_by_date?%s"
+                             (consult-hn--normalize-input input)))
          (json-object-type 'hash-table)
          (json-array-type 'list)
          (result (with-current-buffer (url-retrieve-synchronously search-url t t)
