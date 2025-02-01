@@ -81,6 +81,7 @@ string."
       (url-build-query-string params))))
 
 (defun consult-hn--fetch (input cb)
+  ""
   (let* ((search-url (format "https://hn.algolia.com/api/v1/search_by_date?%s"
                              (consult-hn--normalize-input input)))
          (json-object-type 'hash-table)
@@ -88,6 +89,7 @@ string."
          (result (with-current-buffer (url-retrieve-synchronously search-url t t)
                    (goto-char url-http-end-of-headers)
                    (json-read)))
+
          (rows
           (thread-last
             result
@@ -118,35 +120,40 @@ string."
     (funcall cb rows)))
 
 (defun consult-hn ()
-  )
-
-;; (let* ((_ nil))
-;;   (consult--read
-;;    (consult--async-pipeline
-;;     (consult--dynamic-collection #'consult-hn--fetch)
-;;     (consult--async-transform (lambda (coll)
-;;                                 (thread-last
-;;                                   coll
-;;                                   (seq-map
-;;                                    (lambda (x)
-;;                                      (let* ((row (consult-hn--plist->prop-string x :title))
-;;                                             (row (truncate-string-to-width row 50 nil nil "..."))
-;;                                             (author (plist-get x :author))
-;;                                             (created-at (plist-get x :created-at)))
-;;                                        (format "%-50s%-40s%30s" row author created-at)))))))
-;;     (consult--async-throttle))
-;;    :state (lambda (action cand)
-;;             (when cand
-;;               (print (get-text-property 0 'url cand))
-;;               (edebug)))
-;;    :prompt "HN Search: "
-;;    :annotate (lambda (x)
-;;                (format
-;;                 "\n%s"
-;;                 (consult-hn--fill-string
-;;                  (get-text-property 0 'comment x)
-;;                  120 'full)))
-;;    ))
+  ""
+  (interactive)
+  (consult--read
+   (consult--async-pipeline
+    (consult--dynamic-collection #'consult-hn--fetch)
+    (consult--async-transform (lambda (coll)
+                                (thread-last
+                                  coll
+                                  (seq-map
+                                   (lambda (x)
+                                     (let* ((row (consult-hn--plist->prop-string x :title))
+                                            (row (truncate-string-to-width row 69 nil nil "..."))
+                                            (_ (add-text-properties 0 (length row) '(face bold) row)) ; title is bold
+                                            (author (plist-get x :author))
+                                            (created-at (plist-get x :created-at))
+                                            ;; add comment to the row, but hide it
+                                            ;; this is a trick to make the comments "filterable"
+                                            (comment (if-let* ((cmt (plist-get x :comment)))
+                                                         (propertize cmt 'invisible t) "")))
+                                       (format "%-70s%-30s%20s%s" row author created-at comment)))))))
+    (consult--async-throttle))
+   ;; :state (lambda (action cand)
+   ;;          (when cand
+   ;;            (print (get-text-property 0 'url cand))
+   ;;            (edebug)))
+   :prompt "HN Search: "
+   :annotate (lambda (x)
+               ;; comments shown as annotation
+               (if-let* ((comment (get-text-property 0 'comment x))
+                           (ann-txt (replace-regexp-in-string
+                                     "^" "  " ; prefix every line in the comment with an indent
+                                     (consult-hn--fill-string comment 120 'full))))
+                 (format "\n%s\n" ann-txt)
+                 "\n"))))
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
