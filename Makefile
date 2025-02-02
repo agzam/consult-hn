@@ -2,12 +2,13 @@
 
 define DEPS_SCRIPT
 (progn
-  (require 'package)
-  (add-to-list 'package-archives '("melpa" . "http://melpa.org/packages/"))
-  (package-initialize)
-  (package-refresh-contents)
-  (package-install 'buttercup)
-  (package-install 'consult))
+(require 'package)
+(add-to-list 'package-archives '("melpa" . "http://melpa.org/packages/"))
+(package-initialize)
+(package-refresh-contents)
+(package-install 'buttercup)
+(package-install 'consult)
+(package-install 'ts))
 endef
 export DEPS_SCRIPT
 

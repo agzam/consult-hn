@@ -80,4 +80,61 @@
     (let ((consult-hn-default-search-params '((hitsPerPage 125))))
       (expect (consult-hn--normalize-input "foo -- zop=120") :to-equal "query=foo&hitsPerPage=125"))))
 
+(describe "consult-hn--time-ago"
+  ;; the float-time spy works this way: you add some time to a given
+  ;; timestamp, faking (ts-now) to be sometime in the future
+  (it "Matches HN display for known timestamps"
+    (spy-on 'float-time :and-return-value (+ 1738226435 (* 4 24 60 60)))
+    (expect (consult-hn--time-ago 1738226435) :to-equal "4 days ago")
+
+    (spy-on 'float-time :and-return-value (+ 1738226435 (* 1 24 60 60)))
+    (expect (consult-hn--time-ago 1738226435) :to-equal "1 days ago")
+
+    (spy-on 'float-time :and-return-value (+ 1738226435 (* 16 60 60)))
+    (expect (consult-hn--time-ago 1738226435) :to-equal "16 hours ago")
+
+    (spy-on 'float-time :and-return-value (+ 1738226435 (* 16 60 60)))
+    (expect (consult-hn--time-ago 1738226435) :to-equal "16 hours ago")
+
+    (spy-on 'float-time :and-return-value (+ 1738226435 (* 60 60)))
+    (expect (consult-hn--time-ago 1738226435) :to-equal "1 hours ago")
+
+    (spy-on 'float-time :and-return-value (+ 1738226435 (* 125)))
+    (expect (consult-hn--time-ago 1738226435) :to-equal "2 minutes ago"))
+
+  (it "returns 'just now' for timestamps less than 60 seconds ago"
+    (spy-on 'float-time :and-return-value 1738528340)
+    (expect (consult-hn--time-ago 1738528300) :to-equal "just now")
+    (expect (consult-hn--time-ago 1738528339) :to-equal "just now"))
+
+  (it "returns minutes for timestamps less than an hour ago"
+    (spy-on 'float-time :and-return-value 1738528340)
+    (expect (consult-hn--time-ago 1738528040) :to-equal "5 minutes ago")
+    (expect (consult-hn--time-ago 1738524740) :to-equal "1 hours ago"))
+
+  (it "returns hours for timestamps less than a day ago"
+    (spy-on 'float-time :and-return-value 1738528340)
+    (expect (consult-hn--time-ago 1738485540) :to-equal "11 hours ago"))
+
+  (it "returns days for timestamps more than a day ago"
+    (spy-on 'float-time :and-return-value 1738528340)
+    (expect (consult-hn--time-ago 1738355540) :to-equal "2 days ago")))
+
+(describe "consult-hn--plist-keywordize"
+  (it "converts simple plist keys to keywords"
+    (expect (consult-hn--plist-keywordize '(foo "bar" zap "zop"))
+            :to-equal '(:foo "bar" :zap "zop")))
+
+  (it "handles empty plist"
+    (expect (consult-hn--plist-keywordize '())
+            :to-equal '()))
+
+  (it "handles numeric values"
+    (expect (consult-hn--plist-keywordize '(id 123 score 45))
+            :to-equal '(:id 123 :score 45)))
+
+  (it "preserves already keywordized elements"
+    (expect (consult-hn--plist-keywordize '(:foo "bar" zap "zop"))
+            :to-equal '(:foo "bar" :zap "zop"))))
+
 ;;; consult-hn-tests.el ends here
