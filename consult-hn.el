@@ -33,22 +33,22 @@
   :type 'alist
   :group 'consult-hn)
 
-(defcustom consult-hn-preview-story-fn #'consult-hn-preview-story
+(defcustom consult-hn-preview-story-fn #'consult-hn-story-eww
   "Function pointer for previewing selected HN Story."
   :type 'function
   :group 'consult-hn)
 
-(defcustom consult-hn-preview-comment-fn #'consult-hn-preview-comment
+(defcustom consult-hn-preview-comment-fn #'consult-hn-comment-eww
   "Function pointer for previewing selected comment."
   :type 'function
   :group 'consult-hn)
 
-(defcustom consult-hn-browse-story-fn #'consult-hn-browse-story
+(defcustom consult-hn-browse-story-fn #'consult-hn-story-eww
   "Function pointer for browsing selected HN Story."
   :type 'function
   :group 'consult-hn)
 
-(defcustom consult-hn-browse-comment-fn #'consult-hn-browse-comment
+(defcustom consult-hn-browse-comment-fn #'consult-hn-comment-eww
   "Function pointer for browsing selected HN Comment."
   :type 'function
   :group 'consult-hn)
@@ -63,38 +63,60 @@
     restrictSearchableAttributes)
   "Valid fields for HN Algolia API.")
 
-(cl-defun consult-hn-preview-story (&key story-url hn-story-url author created-at &allow-other-keys)
-  ""
-  (let ((after-render (lambda ()
-                        (pp eww-data))))
-   (remove-hook 'eww-after-render-hook after-render)
-   (eww story-url)
-   ;; (with-current-buffer (eww story-url :new-buffer)
-   ;;   (pp (current-buffer))
-   ;;   ;; (edebug)
-   ;;   ;; (goto-char (point-min))
-   ;;   ;; (read-only-mode -1)
-   ;;   ;; (insert (format "HN link: %s\n" hn-story-url))
-   ;;   ;; (insert (format "%s | %s\n\n" author created-at))
-   ;;   ;; (read-only-mode +1)
-   ;;   (display-buffer (current-buffer)))
-   ))
+(cl-defun consult-hn-story-eww (&key story-url hn-story-url author created-at hn-object-url num-comments points &allow-other-keys)
+  "Open hackernews story in eww buffer."
+  (cl-labels ((after-render-a (ofn status url &optional point buffer encode)
+                (unwind-protect
+                    (progn
+                      (funcall ofn status url point buffer encode)
+                      (with-current-buffer buffer
+                        (read-only-mode -1)
+                        (goto-char (point-min))
+                        (shr-insert-document
+                         (with-temp-buffer
+                           (insert (format "<a href=\"%s\">%s</a>" hn-story-url hn-story-url))
+                           (insert "<br/>")
+                           (insert (format
+                                    (concat "<span> <a href=\"%s\">%s</a> | "
+                                            "<a href=\"%s\">%s</a> | "
+                                            "%s points | "
+                                            "%s comments |"
+                                            "</span>")
+                                    (concat "https://news.ycombinator.com/user?id=" author) author
+                                    hn-object-url (consult-hn--time-ago (ts-unix (ts-parse created-at)))
+                                    points num-comments))
+                           (insert "<hr/><br/><br/>")
+                           (libxml-parse-html-region)))))
+                 (advice-remove 'eww-render #'after-render-a))))
+    (advice-add 'eww-render :around #'after-render-a)
+    (eww (or story-url hn-story-url) :new-buffer)))
 
-(with-current-buffer (eww "https://stackoverflow.com/questions/26102889/how-do-i-make-named-arguments-in-elisp" :new-buffer)
-  (save-excursion
-    (goto-char (point-min))
-    (read-only-mode -1)
-    (insert "FOOOHAHHAHA"))
-  (display-buffer (current-buffer)))
-
-(cl-defun consult-hn-preview-comment (&key story-url hn-story-url author created-at comment &allow-other-keys)
-  (edebug))
-
-(cl-defun consult-hn-browse-story (&key story-url hn-story-url author created-at &allow-other-keys)
-  (edebug))
-
-(cl-defun consult-hn-browse-comment (&key story-url hn-story-url author created-at comment &allow-other-keys)
-  (edebug))
+(cl-defun consult-hn-comment-eww (&key story-url hn-story-url author created-at hn-object-url &allow-other-keys)
+  "Open hackernews comment in eww buffer."
+  (cl-labels ((after-render-a (ofn status url &optional point buffer encode)
+                (unwind-protect
+                    (progn
+                      (funcall ofn status url point buffer encode)
+                      (with-current-buffer buffer
+                        (read-only-mode -1)
+                        (goto-char (point-min))
+                        (shr-insert-document
+                         (with-temp-buffer
+                           (insert (format "<a href=\"%s\">%s</a>" story-url story-url))
+                           (insert "\n")
+                           (insert (format "<a href=\"%s\">%s</a>" hn-story-url hn-story-url))
+                           (insert "<br/>")
+                           (insert (format
+                                    (concat "<span> <a href=\"%s\">%s</a> | "
+                                            "<a href=\"%s\">%s</a></span>")
+                                    (concat "https://news.ycombinator.com/user?id=" author)
+                                    author hn-object-url
+                                    (consult-hn--time-ago (ts-unix (ts-parse created-at)))))
+                           (insert "<hr/><br/><br/>")
+                           (libxml-parse-html-region)))))
+                  (advice-remove 'eww-render #'after-render-a))))
+    (advice-add 'eww-render :around #'after-render-a)
+    (eww hn-object-url :new-buffer)))
 
 (defun consult-hn--fill-string (str &optional width justify)
   "Fills the STR string with WIDTH and JUSTIFY options."
@@ -123,8 +145,6 @@ string."
            collect (if (keywordp k) k
                      (intern (concat ":" (symbol-name k))))
            collect v))
-
-(consult-hn--plist-keywordize '(foo "bar" zap "zop"))
 
 (defun consult-hn--time-ago (unix-timestamp)
   "Convert UNIX-TIMESTAMP in the past - into relative time description.
@@ -170,7 +190,7 @@ timestamp value must be in utc timezone."
             :comment (match-string 5 cand-str)))))
 
 (defun consult-hn--fetch (input cb)
-  ""
+  "Send request to hackernews api for INPUT. run CB callback function after."
   (let* ((search-url (format "https://hn.algolia.com/api/v1/search_by_date?%s"
                              (consult-hn--normalize-input input)))
          (json-object-type 'hash-table)
@@ -178,7 +198,6 @@ timestamp value must be in utc timezone."
          (result (with-current-buffer (url-retrieve-synchronously search-url t t)
                    (goto-char url-http-end-of-headers)
                    (json-read)))
-
          (rows
           (thread-last
             result
@@ -199,7 +218,9 @@ timestamp value must be in utc timezone."
                       ;; TODO use ts.el for relative dates
                       (hn-base-url "https://news.ycombinator.com/item?id=%s")
                       (hn-story-url (format hn-base-url (gethash "story_id" x)))
-                      (object-url (format hn-base-url (gethash "objectID" x))))
+                      (object-url (format hn-base-url (gethash "objectID" x)))
+                      (points (gethash "points" x))
+                      (num-comments (gethash "num_comments" x)))
                  (list
                   :title (replace-regexp-in-string " +" " " title) ; titles shouldn't have two or more spaces
                   :author author
@@ -208,7 +229,9 @@ timestamp value must be in utc timezone."
                   :story-url story-url
                   :hn-story-url hn-story-url
                   :hn-object-url object-url
-                  :ts ts)))))))
+                  :ts ts
+                  :points points
+                  :num-comments num-comments)))))))
     (funcall cb rows)))
 
 (defun consul-hn--async-transform (coll)
