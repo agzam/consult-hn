@@ -60,25 +60,34 @@
       (expect (get-text-property 0 'id result) :to-equal 123)
       (expect (get-text-property 0 'score result) :to-equal 45))))
 
-(describe "consult-hn--normalize-input"
+(describe "consult-hn--input->params"
   (it "handles nil and blank strings"
-    (expect (consult-hn--normalize-input nil) :to-equal nil)
-    (expect (consult-hn--normalize-input "") :to-equal nil))
+    (expect (consult-hn--input->params nil) :to-equal nil)
+    (expect (consult-hn--input->params "") :to-equal nil))
   (it "basic input gets turn into query"
     (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--normalize-input "foo") :to-equal "query=foo")))
+      (expect (consult-hn--input->params "foo") :to-equal '((query "foo")))))
   (it "basic input with separator but no additional params"
     (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--normalize-input "foo --") :to-equal "query=foo")))
+      (expect (consult-hn--input->params "foo --") :to-equal '((query "foo")))))
   (it "multiple tags properly parse"
     (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--normalize-input "foo -- tags=(story,author_boo)") :to-equal "query=foo&tags=(story,author_boo)")))
+      (expect (consult-hn--input->params "foo -- tags=(story,author_boo)")
+              :to-equal '((query "foo") (tags "(story,author_boo)")))
+      (expect (consult-hn--input->params "foo -- tags=story,author_boo")
+              :to-equal '((query "foo") (tags "story,author_boo")))))
   (it "default params accounted for"
     (let ((consult-hn-default-search-params '((hitsPerPage 125) (tags "comment"))))
-      (expect (consult-hn--normalize-input "foo --") :to-equal "query=foo&hitsPerPage=125&tags=comment")))
+      (expect (consult-hn--input->params "foo --")
+              :to-equal '((query "foo") (hitsPerPage 125) (tags "comment")))))
+  (it "empty query allowed"
+    (let ((consult-hn-default-search-params nil))
+      (expect (consult-hn--input->params "-- tags=front_page")
+              :to-equal '((tags "front_page")))))
   (it "bogus keys get removed"
     (let ((consult-hn-default-search-params '((hitsPerPage 125))))
-      (expect (consult-hn--normalize-input "foo -- zop=120") :to-equal "query=foo&hitsPerPage=125"))))
+      (expect (consult-hn--input->params "foo -- zop=120")
+              :to-equal '((query "foo") (hitsPerPage 125))))))
 
 (describe "consult-hn--time-ago"
   ;; the float-time spy works this way: you add some time to a given

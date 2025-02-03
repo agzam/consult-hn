@@ -28,7 +28,8 @@
   :prefix "consult-hn"
   :group 'consult-extensions)
 
-(defcustom consult-hn-default-search-params '((typoTolerance false))
+(defcustom consult-hn-default-search-params '((typoTolerance false)
+                                              (hitsPerPage 100))
   "Default parameters for consult-hn search."
   :type 'alist
   :group 'consult-hn)
@@ -158,22 +159,26 @@ timestamp value must be in utc timezone."
      (t (concat (car (split-string (ts-human-format-duration diff) ","))
                 " ago")))))
 
-(defun consult-hn--normalize-input (input)
+(defun consult-hn--input->params (input)
   "Turn INPUT into a proper query string."
   (when (and input (not (string-blank-p input)))
-    (let* ((split (consult--command-split input))
+    (let* ((split (split-string input "--" nil " +"))
            (params (thread-last
-                     (cdr-safe split)
-                     (seq-map (lambda (x)
-                                (let ((p (split-string x "=")))
-                                  (list (intern (car p)) (cadr p)))))
+                     (when-let* ((parts (cadr split))
+                                 (parts (split-string parts "=" nil " +")))
+                       (cl-loop for (k v) on parts by #'cddr
+                                when (and k v
+                                          (not (string-blank-p k))
+                                          (not (string-blank-p v)))
+                                collect (list (intern k) (replace-regexp-in-string " +" "" v))))
                      (seq-union consult-hn-default-search-params)
                      (seq-filter (lambda (x)
                                    (member (car x) consult-hn--api-allowed-keys)))))
-           (_ (setf (alist-get 'query params)
-                    (list (url-encode-url (car-safe split)))))
+           (_ (unless (string-blank-p (car-safe split))
+                (setf (alist-get 'query params)
+                      (list (url-encode-url (car-safe split))))))
            (params (cl-remove-duplicates params :key #'car)))
-      (url-build-query-string params))))
+      params)))
 
 (defun consult-hn--parse-row-for-lookup (cand-str)
   "Parse displayed candidate string CAND-STR and break into parts."
@@ -194,8 +199,18 @@ timestamp value must be in utc timezone."
 
 (defun consult-hn--fetch (input cb)
   "Send request to hackernews api for INPUT. run CB callback function after."
-  (let* ((search-url (format "https://hn.algolia.com/api/v1/search_by_date?%s"
-                             (consult-hn--normalize-input input)))
+  (print "fetching")
+  (let* ((params (consult-hn--input->params input))
+         (search-type (if (and params
+                               (thread-last
+                                 params (alist-get 'tags)
+                                 car-safe
+                                 (funcall (lambda (x) (or x "")))
+                                 (string-match-p "front_page")))
+                          "search" "search_by_date"))
+         (search-url (format "https://hn.algolia.com/api/v1/%s?%s"
+                             search-type
+                             (url-build-query-string params)))
          (json-object-type 'hash-table)
          (json-array-type 'list)
          (result (with-current-buffer (url-retrieve-synchronously search-url t t)
@@ -237,7 +252,7 @@ timestamp value must be in utc timezone."
                   :num-comments num-comments)))))))
     (funcall cb rows)))
 
-(defun consul-hn--async-transform (coll)
+(defun consult-hn--async-transform (coll)
   "Transform COLL function."
   (thread-last
     coll
@@ -257,38 +272,35 @@ timestamp value must be in utc timezone."
          (format "%-75s   %-20s   %20s   %s   %s"
                  row author ago created-at comment))))))
 
-(defun consult-hn--async-lookup (cand coll input _narr)
+(defun consult-hn--async-lookup (cand coll _input _narr)
   "Lookup fn."
   (when (and cand coll)
     (let* ((parsed (consult-hn--parse-row-for-lookup cand))
            (created-at (plist-get parsed :created-at))
            (title (plist-get parsed :title))
-           (comment (plist-get parsed :comment))
            (found (thread-last
                     coll
-                    (seq-find (lambda (row)
-                                (let* ((props (text-properties-at 0 row))
-                                       (r-created-at (plist-get props 'created-at))
-                                       (r-title (plist-get props 'title))
-                                       (r-comment (plist-get props 'comment)))
-                                  (and
-                                   (string= created-at r-created-at)
-                                   (string-prefix-p (replace-regexp-in-string "^#\\|[.][.][.]$" "" title)
-                                                    (replace-regexp-in-string " +" " " r-title))
-                                   (string-prefix-p comment r-comment))))))))
-
+                    (seq-find
+                     (lambda (row)
+                       (let* ((props (text-properties-at 0 row))
+                              (r-created-at (plist-get props 'created-at))
+                              (r-title (plist-get props 'title)))
+                         (and
+                          title r-title
+                          (string= created-at r-created-at)
+                          (string-prefix-p (replace-regexp-in-string "^#\\|[.][.][.]$" "" title)
+                                           (replace-regexp-in-string " +" " " r-title)))))))))
       (or found
           (display-warning 'consult-hn (format "couldn't match '%s' during lookup" parsed) :warning)))))
-
 
 (defun consult-hn (&optional initial)
   "Consult interface for searching on Hackernews."
   (interactive)
   (consult--read
    (consult--async-pipeline
+    (consult--async-throttle)
     (consult--dynamic-collection #'consult-hn--fetch)
-    (consult--async-transform #'consul-hn--async-transform)
-    (consult--async-throttle))
+    (consult--async-transform #'consult-hn--async-transform))
    :lookup #'consult-hn--async-lookup
    :state (lambda (action cand)
             (when-let* ((_ cand)
@@ -304,7 +316,8 @@ timestamp value must be in utc timezone."
                     (apply consult-hn-browse-comment-fn props)
                   (apply consult-hn-browse-story-fn props))))))
    :prompt "HN Search: "
-   :initial initial
+   :sort nil
+   :initial (or initial "-- tags=front_page")
    :history '(:input consult-hn--history)
    :annotate (lambda (x)
                ;; comments shown as annotation
@@ -312,8 +325,12 @@ timestamp value must be in utc timezone."
                          (ann-txt (replace-regexp-in-string
                                    "^" "  " ; prefix every line in the comment with an indent
                                    (consult-hn--fill-string comment 120 'full))))
-                   (format "\n%s\n" ann-txt)
-                 "\n"))))
+                   (format "\n%s" ann-txt)
+                 ""))))
+
+;; (consult-hn "-- tags=front_page")
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
+
+
