@@ -63,6 +63,9 @@
     restrictSearchableAttributes)
   "Valid fields for HN Algolia API.")
 
+(defvar consult-hn--history nil
+  "History of queries for consult-hn.")
+
 (cl-defun consult-hn-story-eww (&key story-url hn-story-url author created-at hn-object-url num-comments points &allow-other-keys)
   "Open hackernews story in eww buffer."
   (cl-labels ((after-render-a (ofn status url &optional point buffer encode)
@@ -254,27 +257,32 @@ timestamp value must be in utc timezone."
          (format "%-75s   %-20s   %20s   %s   %s"
                  row author ago created-at comment))))))
 
-(defun consult-hn--async-lookup (cand coll _input _narr)
+(defun consult-hn--async-lookup (cand coll input _narr)
   "Lookup fn."
-  (let* ((parsed (consult-hn--parse-row-for-lookup cand))
-         (created-at (plist-get parsed :created-at))
-         (title (plist-get parsed :title))
-         (comment (plist-get parsed :comment)))
-    (thread-last
-      coll
-      (seq-find (lambda (row)
-                  (let* ((props (text-properties-at 0 row))
-                         (r-created-at (plist-get props 'created-at))
-                         (r-title (plist-get props 'title))
-                         (r-comment (plist-get props 'comment)))
-                    (and
-                     (string= created-at r-created-at)
-                     (string-prefix-p (replace-regexp-in-string "\\.{3}$" "" title)
-                                      r-title)
-                     (string= comment r-comment))))))))
+  (when (and cand coll)
+    (let* ((parsed (consult-hn--parse-row-for-lookup cand))
+           (created-at (plist-get parsed :created-at))
+           (title (plist-get parsed :title))
+           (comment (plist-get parsed :comment))
+           (found (thread-last
+                    coll
+                    (seq-find (lambda (row)
+                                (let* ((props (text-properties-at 0 row))
+                                       (r-created-at (plist-get props 'created-at))
+                                       (r-title (plist-get props 'title))
+                                       (r-comment (plist-get props 'comment)))
+                                  (and
+                                   (string= created-at r-created-at)
+                                   (string-prefix-p (replace-regexp-in-string "^#\\|[.][.][.]$" "" title)
+                                                    (replace-regexp-in-string " +" " " r-title))
+                                   (string-prefix-p comment r-comment))))))))
 
-(defun consult-hn ()
-  ""
+      (or found
+          (display-warning 'consult-hn (format "couldn't match '%s' during lookup" parsed) :warning)))))
+
+
+(defun consult-hn (&optional initial)
+  "Consult interface for searching on Hackernews."
   (interactive)
   (consult--read
    (consult--async-pipeline
@@ -296,6 +304,8 @@ timestamp value must be in utc timezone."
                     (apply consult-hn-browse-comment-fn props)
                   (apply consult-hn-browse-story-fn props))))))
    :prompt "HN Search: "
+   :initial initial
+   :history '(:input consult-hn--history)
    :annotate (lambda (x)
                ;; comments shown as annotation
                (if-let* ((comment (get-text-property 0 'comment x))
