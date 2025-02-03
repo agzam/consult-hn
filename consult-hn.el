@@ -22,6 +22,8 @@
 (require 'consult)
 (require 'subr-x)
 (require 'ts)
+(require 'url)
+(require 'json)
 
 (defgroup consult-hn nil
   "Group for consult-hn package."
@@ -199,7 +201,6 @@ timestamp value must be in utc timezone."
 
 (defun consult-hn--fetch (input cb)
   "Send request to hackernews api for INPUT. run CB callback function after."
-  (print "fetching")
   (let* ((params (consult-hn--input->params input))
          (search-type (if (and params
                                (thread-last
