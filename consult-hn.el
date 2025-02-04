@@ -30,8 +30,7 @@
   :prefix "consult-hn"
   :group 'consult-extensions)
 
-(defcustom consult-hn-default-search-params '((typoTolerance false)
-                                              (hitsPerPage 100))
+(defcustom consult-hn-default-search-params '((typoTolerance false))
   "Default parameters for consult-hn search."
   :type 'alist
   :group 'consult-hn)
@@ -201,57 +200,63 @@ timestamp value must be in utc timezone."
 
 (defun consult-hn--fetch (input cb)
   "Send request to hackernews api for INPUT. run CB callback function after."
-  (let* ((params (consult-hn--input->params input))
-         (search-type (if (and params
-                               (thread-last
-                                 params (alist-get 'tags)
-                                 car-safe
-                                 (funcall (lambda (x) (or x "")))
-                                 (string-match-p "front_page")))
-                          "search" "search_by_date"))
-         (search-url (format "https://hn.algolia.com/api/v1/%s?%s"
-                             search-type
-                             (url-build-query-string params)))
-         (json-object-type 'hash-table)
-         (json-array-type 'list)
-         (result (with-current-buffer (url-retrieve-synchronously search-url t t)
-                   (goto-char url-http-end-of-headers)
-                   (json-read)))
-         (rows
-          (thread-last
-            result
-            (gethash "hits")
-            (seq-map
-             (lambda (x)
-               (let* ((author (gethash "author" x))
-                      (comment-text (when-let* ((comment-markup (gethash "comment_text" x)))
-                                      (with-temp-buffer
-                                        (insert comment-markup)
-                                        (dom-texts (libxml-parse-html-region)))))
-                      (title (or (gethash "title" x)
-                                 (gethash "story_title" x)))
-                      (story-url (or (gethash "story_url" x)
-                                     (gethash "url" x)))
-                      (created-at (gethash "created_at" x))
-                      (ts (gethash "created_at_i" x))
-                      ;; TODO use ts.el for relative dates
-                      (hn-base-url "https://news.ycombinator.com/item?id=%s")
-                      (hn-story-url (format hn-base-url (gethash "story_id" x)))
-                      (object-url (format hn-base-url (gethash "objectID" x)))
-                      (points (gethash "points" x))
-                      (num-comments (gethash "num_comments" x)))
-                 (list
-                  :title (replace-regexp-in-string " +" " " title) ; titles shouldn't have two or more spaces
-                  :author author
-                  :comment comment-text
-                  :created-at created-at
-                  :story-url story-url
-                  :hn-story-url hn-story-url
-                  :hn-object-url object-url
-                  :ts ts
-                  :points points
-                  :num-comments num-comments)))))))
-    (funcall cb rows)))
+  (let* ((page 0)
+         (nbPages 100)
+         (all-rows ()))
+    (while (not (eq nbPages page))
+      (let* ((params (consult-hn--input->params input))
+             (_ (setf (alist-get 'page params) (list page)))
+             (search-type (if (and params
+                                   (thread-last
+                                     params (alist-get 'tags)
+                                     car-safe
+                                     (funcall (lambda (x) (or x "")))
+                                     (string-match-p "front_page")))
+                              "search" "search_by_date"))
+             (search-url (format "https://hn.algolia.com/api/v1/%s?%s"
+                                 search-type
+                                 (url-build-query-string params)))
+             (json-object-type 'hash-table)
+             (json-array-type 'list)
+             (result (with-current-buffer (url-retrieve-synchronously search-url t t)
+                       (goto-char url-http-end-of-headers)
+                       (json-read)))
+             (rows (thread-last
+                     result
+                     (gethash "hits")
+                     (seq-map
+                      (lambda (x)
+                        (let* ((author (gethash "author" x))
+                               (comment-text (when-let* ((comment-markup (gethash "comment_text" x)))
+                                               (with-temp-buffer
+                                                 (insert comment-markup)
+                                                 (dom-texts (libxml-parse-html-region)))))
+                               (title (or (gethash "title" x)
+                                          (gethash "story_title" x)))
+                               (story-url (or (gethash "story_url" x)
+                                              (gethash "url" x)))
+                               (created-at (gethash "created_at" x))
+                               (ts (gethash "created_at_i" x))
+                               (hn-base-url "https://news.ycombinator.com/item?id=%s")
+                               (hn-story-url (format hn-base-url (gethash "story_id" x)))
+                               (object-url (format hn-base-url (gethash "objectID" x)))
+                               (points (gethash "points" x))
+                               (num-comments (gethash "num_comments" x)))
+                          (list
+                           :title (replace-regexp-in-string " +" " " title) ; titles shouldn't have two or more spaces
+                           :author author
+                           :comment comment-text
+                           :created-at created-at
+                           :story-url story-url
+                           :hn-story-url hn-story-url
+                           :hn-object-url object-url
+                           :ts ts
+                           :points points
+                           :num-comments num-comments)))))))
+        (setq all-rows (append all-rows rows))
+        (setq nbPages (gethash "nbPages" result))
+        (setq page (1+ (gethash "page" result)))
+        (funcall cb all-rows)))))
 
 (defun consult-hn--async-transform (coll)
   "Transform COLL function."
