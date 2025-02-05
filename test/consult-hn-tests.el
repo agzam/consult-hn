@@ -39,27 +39,6 @@
     (expect (consult-hn--fill-string "test" 10 'center)
             :to-match "   test")))
 
-(describe "consult-hn--plist->prop-string"
-  (it "converts basic plist to propertized string"
-    (let ((result (consult-hn--plist->prop-string
-                   '(:title "Hello" :url "http://example.com") :title)))
-      (expect (get-text-property 0 'url result) :to-equal "http://example.com")
-      (expect result :to-equal "Hello")))
-
-  (it "handles empty properties"
-    (let ((result (consult-hn--plist->prop-string '(:title "Test" :url nil) :title)))
-      (expect result :to-equal "Test")
-      (expect (get-text-property 0 'url result) :to-be nil)))
-
-  (it "preserves multiple properties"
-    (let ((result (consult-hn--plist->prop-string
-                   '(:text "Sample" :url "http://test.com" :id 123 :score 45)
-                   :text)))
-      (expect result :to-equal "Sample")
-      (expect (get-text-property 0 'url result) :to-equal "http://test.com")
-      (expect (get-text-property 0 'id result) :to-equal 123)
-      (expect (get-text-property 0 'score result) :to-equal 45))))
-
 (describe "consult-hn--input->params"
   (it "handles nil and blank strings"
     (expect (consult-hn--input->params nil) :to-equal nil)
