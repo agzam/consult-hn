@@ -35,6 +35,11 @@
   :type 'alist
   :group 'consult-hn)
 
+(defcustom consult-hn-initial-input-string "-- tags=front_page"
+  "Initial input string."
+  :type 'string
+  :group 'consult-hn)
+
 (defcustom consult-hn-preview-story-fn #'consult-hn-story-eww
   "Function pointer for previewing selected HN Story."
   :type 'function
@@ -323,7 +328,7 @@ timestamp value must be in utc timezone."
                   (apply consult-hn-browse-story-fn props))))))
    :prompt "HN Search: "
    :sort nil
-   :initial (or initial "-- tags=front_page")
+   :initial (or initial consult-hn-initial-input-string)
    :history '(:input consult-hn--history)
    :annotate (lambda (x)
                ;; comments shown as annotation
@@ -333,8 +338,6 @@ timestamp value must be in utc timezone."
                                    (consult-hn--fill-string comment 120 'full))))
                    (format "\n%s" ann-txt)
                  ""))))
-
-;; (consult-hn "-- tags=front_page")
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
