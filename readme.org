@@ -1,0 +1,3 @@
+#+title: [[https://github.com/minad/consult][Consult]] extension for searching through Hackernews
+
+Package provides UI for searching through [[https://news.ycombinator.com/][Hackernews]].

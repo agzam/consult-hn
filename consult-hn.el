@@ -5,8 +5,7 @@
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: January 30, 2025
-;; Modified: January 30, 2025
-;; Version: 0.0.1
+;; Version: 1.0.0
 ;; Keywords: search extensions
 ;; Homepage: https://github.com/agzam/consult-hn
 ;; Package-Requires: ((emacs "29.4") (consult "2.0") (ts "0.3"))
@@ -16,6 +15,9 @@
 ;;; Commentary:
 ;;
 ;;  Description
+;;
+;;  This is an extension for Consult
+;;  https://github.com/minad/consult
 ;;
 ;;; Code:
 
