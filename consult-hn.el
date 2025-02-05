@@ -23,6 +23,7 @@
 (require 'subr-x)
 (require 'ts)
 (require 'url)
+(require 'url-http)
 (require 'json)
 
 (defgroup consult-hn nil
@@ -268,6 +269,7 @@ timestamp value must be in utc timezone."
     (consult--async-transform #'consult-hn--async-transform))
    :lookup #'consult-hn--async-lookup
    :state (lambda (action cand)
+            (pp cand)
             (when-let* ((hn-obj (consult-hn--plist-keywordize
                                  (text-properties-at 0 (or cand "")))))
               (when (member action '(preview return))
@@ -287,21 +289,17 @@ timestamp value must be in utc timezone."
                    (format "\n%s" ann-txt)
                  ""))))
 
-;; (defun embark--consult-hn-refine (type target)
-;;   (pp (cons type (consult-hn--plist-keywordize
-;;                   (text-properties-at 0 target))))
-;;   (cons type (consult-hn--plist-keywordize
-;;               (text-properties-at 0 target))))
+(defun consult-hn--open (item)
+  "Default Embark action for consult-hn ITEM."
+  (thread-last
+    (or item "")
+    (text-properties-at 0)
+    consult-hn--plist-keywordize
+    (apply consult-hn-browse-fn)))
 
-;; (defun consult-hn--open (cand)
-;;   (edebug))
-
-;; (add-to-list
-;;  'embark-transformer-alist
-;;  '(consult-hn-result . embark--consult-hn-refine))
-
-;; (setf (alist-get 'consult-hn-result embark-default-action-overrides)
-;;         #'consult-hn--open)
+(when (featurep 'embark)
+  (setf (alist-get 'consult-hn-result embark-default-action-overrides)
+        #'consult-hn--open))
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
