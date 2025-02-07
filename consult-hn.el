@@ -217,10 +217,11 @@ timestamp value must be in utc timezone."
                            'ts ts
                            'points points
                            'num-comments num-comments)))))))
-        (setq all-rows (append all-rows rows))
+        (setq all-rows rows)
         (setq nbPages (gethash "nbPages" result))
         (setq page (1+ (gethash "page" result)))
-        (funcall cb all-rows)))))
+        (funcall cb rows)))
+    (funcall cb all-rows)))
 
 (defun consult-hn--async-transform (coll)
   "Transform COLL function."
@@ -302,6 +303,13 @@ timestamp value must be in utc timezone."
 (when (featurep 'embark)
   (setf (alist-get 'consult-hn-result embark-default-action-overrides)
         #'consult-hn--open))
+
+(defun consult-hn-url-matching (query)
+  ""
+  (interactive)
+  (consult-hn (concat query " -- restrictSearchableAttributes=url")))
+
+;; (consult-hn-url-matching "meetup.com")
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
