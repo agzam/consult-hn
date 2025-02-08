@@ -43,6 +43,11 @@
   :type 'string
   :group 'consult-hn)
 
+(defcustom consult-hn-preview-fn #'consult-hn-eww
+  "Function pointer for browsing selected HN Story."
+  :type 'function
+  :group 'consult-hn)
+
 (defcustom consult-hn-browse-fn #'consult-hn-eww
   "Function pointer for browsing selected HN Story."
   :type 'function
@@ -269,8 +274,9 @@ timestamp value must be in utc timezone."
    :state (lambda (action cand)
             (when-let* ((hn-obj (consult-hn--plist-keywordize
                                  (text-properties-at 0 (or cand "")))))
-              (when (member action '(preview return))
-                (apply consult-hn-browse-fn hn-obj))))
+              (pcase action
+                ('preview (apply consult-hn-preview-fn hn-obj))
+                ('return (apply consult-hn-browse-fn hn-obj)))))
    :prompt "HN Search: "
    :sort nil
    :initial (or initial consult-hn-initial-input-string)

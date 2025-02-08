@@ -1,3 +1,107 @@
-#+title: [[https://github.com/minad/consult][Consult]] extension for searching through Hackernews
+#+title: [[https://github.com/minad/consult][Consult]] extension for searching on HackerNews
 
-Package provides UI for searching through [[https://news.ycombinator.com/][Hackernews]].
+* Why.
+Let me ask you a question. Why are you here? Why do you need HackerNews in Emacs? Don't waste your time - go read a book instead, watch a movie, hug your kids, your partner, dog, cat, neighbor, a toaster - whatever, just go, do something better with your life instead of lurking on the orange website.
+
+Alright, alright, fine. So why does this package exist?
+
+a) Because, why not?
+
+b) I just needed to solve this weird itch for myself - very often I get a link to a blogpost, a book or a video. And sometimes, I'm curious what HN comments say about that thing. Also, sometimes I'd like to find comments I posted long ago, just to get assurance of how stupid I was back then and hopefully not getting any stupider now.
+
+* What.
+This is an Emacs extension that extends an extension. Because Emacs is extendible beyond imaginable limits, it allows you to extend what's already been extended. So, in order to minimize confusion, we Emacsians do not call them "extensions". We call them "packages".
+
+So, this is a package that packages some functionality for another (very popular and awesome) package called Consult. If you love Emacs, but not using Consult - stop hugging your toaster, close this page and go install it, asap!
+
+This package searches through HN via its public Algolia API.
+
+* How.
+You install the package using your favorite Emacs package manager. For now you'd just recipe-it from GitHub directly. If they let me publish this crap on MELPA, I'll update the instructions.
+
+Doom's way:
+
+#+begin_src elisp
+(package! hnreader :recipe (:host github :repo "agzam/consult-hn"))
+#+end_src
+
+Then you can just run ~(consult-hn)~ command.
+
+Type a query and it will search for both comments and stories, by default sorting them with the latest first.
+
+The format of the queries is the following: ~#SEARCH-TERM -- ADDITIONAL-PARAMETERS~
+
+Parameters and the search term are always separated by =--=
+
+You can omit either parameters or the search-term. Parameters are key/value pairs of format: ~KEY=VALUE~
+
+You can use keys listed in [[https://hn.algolia.com/api][the official API documentation]]
+
+** Examples:
+
+~#Emacs~ - will search for everything that contains "Emacs"
+
+~#Emacs -- tags=story~ - articles with Emacs in the title
+
+~#I hate Emacs -- tags=comment~ - comments matching the query
+
+~#-- tags=story,author_pg~ - all the stories posted by Paul Graham
+
+~#-- tags=comment,author_pg~ - all the comments of Paul Graham
+
+~#clojure -- restrictSearchableAttributes=url~ - all stories containing matching URLs
+
+*** Narrowing
+
+Consult has narrowing feature, that's why the prompt for consult-hn, typically starts with that hash-mark. So you can use it to narrow your results. e.g.
+
+~#Emacs#Vim~ - finds everything on HN that contains "Emacs", but then narrows the results to all the items that also contain ~Vim~
+
+~#I love Emacs -- tags=comment #hate Vim~ - fetch some comments and narrow
+
+** Customization
+
+Once you find HN items you have multiple choices:
+
+- preview (without closing the Consult buffer)
+- browse (close the search buffer, open the item)
+- push all the found items into Embark-Collect buffer. See [[https://github.com/oantolin/embark][Embark's]] documentation for that.
+
+ You can customize ~consult-hn-browse-fn~ var, setting it to a function, here's for example how to make it always open selected item in the browser.
+
+#+begin_src emacs-lisp
+ (setq consult-hn-browse-fn
+        (lambda (&rest args)
+          (browse-url (plist-get args :hn-object-url))))
+#+end_src
+
+Similarly, you can customize ~consult-hn-preview-fn~
+
+If you're using [[https://github.com/thanhvg/emacs-hnreader][hnreader]], you may want to read the comments in its buffer - they show up in an Org-mode outline, it's very nice:
+
+#+begin_src emacs-lisp
+(cl-defun consult-hn-reader (&key hn-object-url &allow-other-keys)
+  (hnreader-comment hn-object-url))
+
+(setq consult-hn-browse-fn #'consult-hn-reader
+#+end_src
+
+You can set ~consult-hn-initial-input-string~. For example, if you want to always see stories from the HN front page (whenever you open consult-hn), you can do ~(setq consult-hn-initial-input-string "-- tags=front_page")~. /There's however an important caveat I should mention. HN uses some proprietary algorithm to sort those stories, something that API doesn't expose, so the sorted order of those stories will not be exactly as on the HN Front Page./
+
+Or you may want to by default ignore stories that have fewer than a dozen of comments:
+
+#+begin_src emacs-lisp
+(setq consult-hn-initial-input-string "-- numericFilters=num_comments>11")
+#+end_src
+
+Additionally, you can customize ~consult-hn-default-search-params~, like so:
+
+#+begin_src emacs-lisp
+(setq consult-hn-default-search-params '((numericFilters "num_comments>11")))
+#+end_src
+
+Be careful though - these params quietly get translated into the query, and won't even show up in the UI, for changing them, you will have to explicitly override them in the prompt. So, for the example above, unless you explicitly state: ~"-- numericFilters=num_comments>0"~, stories with fewer than 12 comments *always* be ignored. It might get confusing, so I suggest leaving this var unchanged.
+
+** Miscellaneous considerations
+
+The command, once receives a query, starts pulling the results exhaustively, until it fetches all the pages. Be mindful that you may encounter rate limiting due to Algolia API's daily usage restrictions. To avoid this, try using more specific search terms and consider dropping into Embark Collect buffer to gather results if the counter continues to increase, rather than waiting for complete retrieval of all pages. I've been testing it pretty actively, so far have not hit the rate-limiter.
