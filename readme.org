@@ -1,23 +1,31 @@
 #+title: [[https://github.com/minad/consult][Consult]] extension for searching on HackerNews
 
 * Why.
-Let me ask you a question. Why are you here? Why do you need HackerNews in Emacs? Don't waste your time - go read a book instead, watch a movie, hug your kids, your partner, dog, cat, neighbor, a toaster - whatever, just go, do something better with your life instead of lurking on the orange website.
+Alright, real talk time. Why are you here? Why do you need HackerNews in Emacs? What's next, Tinder in Vim? Instagram in sed?
+
+Listen, I get it - you've already got your email, calendar, therapist, and pizza delivery service running in Emacs. But at some point we need to draw the line.
+
+Go outside! Touch grass! Read a book! Hug your loved ones - your partner, your kids, your dog, that suspicious potted plant that's been eyeing you funny. Hell, go have a meaningful conversation with your toaster for all I care.
+
+Please, for the love of Stallman's beard, stop trying to consume the orange website from inside your text editor. Your productivity theatre has gone too far. The call is coming from inside the buffer!
+
+(Who am I kidding, see you in the comments section in 5 minutes.)
 
 Alright, alright, fine. So why does this package exist?
 
 a) Because, why not?
 
-b) I just needed to solve this weird itch for myself - very often I get a link to a blogpost, a book or a video. And sometimes, I'm curious what HN comments say about that thing. Also, sometimes I'd like to find comments I posted long ago, just to get assurance of how stupid I was back then and hopefully not getting any stupider now.
+b) I just needed to solve this weird itch for myself - very often I get a link to a blog post, a book or a video. And sometimes, I'm curious what HN comments say about that thing. Also, sometimes I'd like to find comments I posted myself long ago, just to get reassurance of how stupid I was back then and hopefully not getting any stupider now.
 
 * What.
-This is an Emacs extension that extends an extension. Because Emacs is extendible beyond imaginable limits, it allows you to extend what's already been extended. So, in order to minimize confusion, we Emacsians do not call them "extensions". We call them "packages".
+This is an Emacs extension that extends an extension. Because Emacs is extensible beyond imaginable limits, it allows you to extend what's already been extended. So, in order to minimize confusion (or vice versa), we Emacsians do not call them "extensions". We call them "packages".
 
 So, this is a package that packages some functionality for another (very popular and awesome) package called Consult. If you love Emacs, but not using Consult - stop hugging your toaster, close this page and go install it, asap!
 
-This package searches through HN via its public Algolia API.
+This package searches through HN using public Algolia API.
 
 * How.
-You install the package using your favorite Emacs package manager. For now you'd just recipe-it from GitHub directly. If they let me publish this crap on MELPA, I'll update the instructions.
+You can install the package through your favorite Emacs package manager. For now you'd just recipe-it from GitHub directly. If they let me publish this crap on MELPA, I'll update the instructions.
 
 Doom's way:
 
@@ -25,7 +33,7 @@ Doom's way:
 (package! hnreader :recipe (:host github :repo "agzam/consult-hn"))
 #+end_src
 
-Then you can just run ~(consult-hn)~ command.
+Then you can just run ~(consult-hn-transient)~ command /(UX-convenient option)/, or (more directly) — ~(consult-hn)~ command.
 
 Type a query and it will search for both comments and stories, by default sorting them with the latest first.
 
@@ -43,7 +51,7 @@ You can use keys listed in [[https://hn.algolia.com/api][the official API docume
 
 ~#Emacs -- tags=story~ - articles with Emacs in the title
 
-~#I hate Emacs -- tags=comment~ - comments matching the query
+~#"I hate Emacs" -- tags=comment~ - comments matching the query
 
 ~#-- tags=story,author_pg~ - all the stories posted by Paul Graham
 
@@ -55,9 +63,9 @@ You can use keys listed in [[https://hn.algolia.com/api][the official API docume
 
 Consult has narrowing feature, that's why the prompt for consult-hn, typically starts with that hash-mark. So you can use it to narrow your results. e.g.
 
-~#Emacs#Vim~ - finds everything on HN that contains "Emacs", but then narrows the results to all the items that also contain ~Vim~
+~#Emacs#Vim~ - finds everything on HN that contains "Emacs", but then narrows the results to filter all the items that also contain ~Vim~
 
-~#I love Emacs -- tags=comment #hate Vim~ - fetch some comments and narrow
+~#"I love Emacs" -- tags=comment #hate Vim~ - fetch some comments and narrow
 
 ** Customization
 
@@ -104,4 +112,4 @@ Be careful though - these params quietly get translated into the query, and won'
 
 ** Miscellaneous considerations
 
-The command, once receives a query, starts pulling the results exhaustively, until it fetches all the pages. Be mindful that you may encounter rate limiting due to Algolia API's daily usage restrictions. To avoid this, try using more specific search terms and consider dropping into Embark Collect buffer to gather results if the counter continues to increase, rather than waiting for complete retrieval of all pages. I've been testing it pretty actively, so far have not hit the rate-limiter.
+The command, once receives a query, starts pulling the results exhaustively, until it fetches all the pages. Be mindful that you may encounter rate limiting due to Algolia API's daily usage restrictions. To avoid this, try using more specific search terms and consider dropping into Embark Collect buffer to gather results sooner, rather than waiting for complete retrieval of all pages. I've been testing it pretty actively, and so far have not hit the rate-limiter.
