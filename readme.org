@@ -78,7 +78,7 @@ Once you find HN items you have multiple choices:
  You can customize ~consult-hn-browse-fn~ var, setting it to a function, here's for example how to make it always open selected item in the browser.
 
 #+begin_src emacs-lisp
- (setq consult-hn-browse-fn
+ (setopt consult-hn-browse-fn
         (lambda (&rest args)
           (browse-url (plist-get args :hn-object-url))))
 #+end_src
@@ -91,7 +91,7 @@ If you're using [[https://github.com/thanhvg/emacs-hnreader][hnreader]], you may
 (cl-defun consult-hn-reader (&key hn-object-url &allow-other-keys)
   (hnreader-comment hn-object-url))
 
-(setq consult-hn-browse-fn #'consult-hn-reader
+(setopt consult-hn-browse-fn #'consult-hn-reader
 #+end_src
 
 You can set ~consult-hn-initial-input-string~. For example, if you want to always see stories from the HN front page (whenever you open consult-hn), you can do ~(setq consult-hn-initial-input-string "-- tags=front_page")~. /There's however an important caveat I should mention. HN uses some proprietary algorithm to sort those stories, something that API doesn't expose, so the sorted order of those stories will not be exactly as on the HN Front Page./
@@ -99,13 +99,13 @@ You can set ~consult-hn-initial-input-string~. For example, if you want to alway
 Or you may want to by default ignore stories that have fewer than a dozen of comments:
 
 #+begin_src emacs-lisp
-(setq consult-hn-initial-input-string "-- numericFilters=num_comments>11")
+(setopt consult-hn-initial-input-string "-- numericFilters=num_comments>11")
 #+end_src
 
 Additionally, you can customize ~consult-hn-default-search-params~, like so:
 
 #+begin_src emacs-lisp
-(setq consult-hn-default-search-params '((numericFilters "num_comments>11")))
+(setopt consult-hn-default-search-params '((numericFilters "num_comments>11")))
 #+end_src
 
 Be careful though - these params quietly get translated into the query, and won't even show up in the UI, for changing them, you will have to explicitly override them in the prompt. So, for the example above, unless you explicitly state: ~"-- numericFilters=num_comments>0"~, stories with fewer than 12 comments *always* be ignored. It might get confusing, so I suggest leaving this var unchanged.
