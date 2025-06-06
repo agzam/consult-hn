@@ -67,7 +67,9 @@
   "History of queries for consult-hn.")
 
 (cl-defun consult-hn-eww (&key story-url title hn-story-url author created-at hn-object-url num-comments points comment &allow-other-keys)
-  "Open hackernews item in eww buffer."
+  "Open hackernews item in eww buffer.
+STORY-URL TITLE HN-STORY-URL AUTHOR CREATED-AT
+HN-OBJECT-URL NUM-COMMENTS POINTS COMMENT - are all the HN-relevant things."
   (cl-labels ((after-render-a (ofn status url &optional point buffer encode)
                 (unwind-protect
                     (progn
@@ -161,68 +163,6 @@ timestamp value must be in utc timezone."
             :created-at (match-string 4 cand-str)
             :comment (match-string 5 cand-str)))))
 
-(defun consult-hn--fetch (input cb)
-  "Send request to hackernews api for INPUT. run CB callback function after."
-  (let* ((page 0)
-         (nbPages 100)
-         (all-rows ()))
-    (while (not (eq nbPages page))
-      (let* ((params (consult-hn--input->params input))
-             (_ (setf (alist-get 'page params) (list page)))
-             (search-type (if (and params
-                                   (thread-last
-                                     params (alist-get 'tags)
-                                     car-safe
-                                     (funcall (lambda (x) (or x "")))
-                                     (string-match-p "front_page")))
-                              "search" "search_by_date"))
-             (search-url (format "https://hn.algolia.com/api/v1/%s?%s"
-                                 search-type
-                                 (url-build-query-string params)))
-             (json-object-type 'hash-table)
-             (json-array-type 'list)
-             (result (with-current-buffer (url-retrieve-synchronously search-url t t)
-                       (goto-char url-http-end-of-headers)
-                       (json-read)))
-             (rows (thread-last
-                     result
-                     (gethash "hits")
-                     (seq-map
-                      (lambda (x)
-                        (let* ((author (gethash "author" x))
-                               (comment-text (when-let* ((comment-markup (gethash "comment_text" x)))
-                                               (with-temp-buffer
-                                                 (insert comment-markup)
-                                                 (dom-texts (libxml-parse-html-region)))))
-                               (title (or (gethash "title" x)
-                                          (gethash "story_title" x)))
-                               (story-url (or (gethash "story_url" x)
-                                              (gethash "url" x)))
-                               (created-at (gethash "created_at" x))
-                               (ts (gethash "created_at_i" x))
-                               (hn-base-url "https://news.ycombinator.com/item?id=%s")
-                               (hn-story-url (format hn-base-url (gethash "story_id" x)))
-                               (object-url (format hn-base-url (gethash "objectID" x)))
-                               (points (gethash "points" x))
-                               (num-comments (gethash "num_comments" x)))
-                          (propertize
-                           (replace-regexp-in-string " +" " " title) ; titles shouldn't have two or more spaces
-                           'title title
-                           'author author
-                           'comment comment-text
-                           'created-at created-at
-                           'story-url story-url
-                           'hn-story-url hn-story-url
-                           'hn-object-url object-url
-                           'ts ts
-                           'points points
-                           'num-comments num-comments)))))))
-        (setq all-rows rows)
-        (setq nbPages (gethash "nbPages" result))
-        (setq page (1+ (gethash "page" result)))
-        (funcall cb rows)))
-    (funcall cb all-rows)))
-
 (defun consult-hn--async-transform (coll)
   "Transform COLL function."
   (thread-last
@@ -243,7 +183,7 @@ timestamp value must be in utc timezone."
                  row author ago created-at comment))))))
 
 (defun consult-hn--async-lookup (cand coll _input _narr)
-  "Lookup fn."
+  "Lookup fn. CAND and COLL standard `consult--read' args for :lookup key."
   (when (and cand coll)
     (let* ((parsed (consult-hn--parse-row-for-lookup cand))
            (created-at (plist-get parsed :created-at))
@@ -262,13 +202,145 @@ timestamp value must be in utc timezone."
                                            (replace-regexp-in-string " +" " " r-title)))))))))
       found)))
 
+(defun consult-hn--fetch-page-async (input page async expected-search &optional buffer-callback)
+  "Fetch a single page asynchronously.
+INPUT is the search query string.
+PAGE is the page number to fetch.
+ASYNC is the callback function to send results downstream.
+EXPECTED-SEARCH is the search term this request belongs to.
+BUFFER-CALLBACK is an optional function called with the request buffer."
+  (let* ((params (consult-hn--input->params input))
+         (_ (setf (alist-get 'page params) (list page)))
+         (search-type (if (and params
+                               (thread-last
+                                 params (alist-get 'tags)
+                                 car-safe
+                                 (funcall (lambda (x) (or x "")))
+                                 (string-match-p "front_page")))
+                          "search" "search_by_date"))
+         (search-url (format "https://hn.algolia.com/api/v1/%s?%s"
+                             search-type
+                             (url-build-query-string params))))
+    (let ((buffer (url-retrieve
+                   search-url
+                   (lambda (status)
+                     ;; Only process if this is still the current search
+                     (when (and (buffer-live-p (current-buffer))
+                                (equal input expected-search))
+                       (if-let ((error (plist-get status :error)))
+                           (message "HN fetch error: %s" error)
+                         (when (and url-http-end-of-headers
+                                    (marker-position url-http-end-of-headers))
+                           (goto-char url-http-end-of-headers)
+                           (condition-case err
+                               (let* ((json-object-type 'hash-table)
+                                      (json-array-type 'list)
+                                      (result (json-read))
+                                      (rows (consult-hn--process-results result))
+                                      (nbPages (gethash "nbPages" result))
+                                      (current-page (gethash "page" result)))
+                                 ;; Send results only if still current search
+                                 (when (and rows (equal input expected-search))
+                                   (funcall async rows))
+                                 ;; Fetch next page if still current search
+                                 (when (and (< (1+ current-page) nbPages)
+                                            (equal input expected-search))
+                                   (consult-hn--fetch-page-async
+                                    input (1+ current-page) async expected-search buffer-callback)))
+                             (json-end-of-file
+                              (message "HN: JSON parse interrupted"))
+                             (error
+                              (message "HN parse error: %s" err)))))))
+                   nil t)))
+      (when (and buffer buffer-callback)
+        (funcall buffer-callback buffer)))))
+
+(defun consult-hn--async-source (async)
+  "Async source function for HN search.
+ASYNC is the callback function to send results downstream."
+  (let ((request-buffers nil)
+        (page 0)
+        (nbPages nil)
+        (current-search nil))  ; Track current search term
+    (lambda (action)
+      (pcase action
+        ((pred stringp)
+         ;; New search - update current search term
+         (setq current-search action)
+         (setq page 0 nbPages nil)
+
+         ;; Cancel existing requests
+         (dolist (buf request-buffers)
+           (when (buffer-live-p buf)
+             (let ((kill-buffer-query-functions nil))
+               (kill-buffer buf))))
+         (setq request-buffers nil)
+
+         ;; Clear previous results
+         (funcall async 'flush)
+
+         ;; Start fetching if input is long enough
+         (when (<= 2 (length action))
+           (consult-hn--fetch-page-async
+            action page async current-search
+            (lambda (buf)
+              (push buf request-buffers)))))
+
+        ('destroy
+         ;; Clean up all request buffers
+         (dolist (buf request-buffers)
+           (when (buffer-live-p buf)
+             (let ((kill-buffer-query-functions nil))
+               (kill-buffer buf))))
+         (setq request-buffers nil))
+
+        (_ (funcall async action))))))
+
+(defun consult-hn--process-results (result)
+  "Process the results from API response.
+RESULT is the parsed JSON response from the HN API."
+  (thread-last
+    result
+    (gethash "hits")
+    (seq-map
+     (lambda (x)
+       (let* ((author (gethash "author" x))
+              (comment-text (when-let* ((comment-markup (gethash "comment_text" x)))
+                              (with-temp-buffer
+                                (insert comment-markup)
+                                (dom-texts (libxml-parse-html-region)))))
+              (title (or (gethash "title" x)
+                         (gethash "story_title" x)))
+              (story-url (or (gethash "story_url" x)
+                             (gethash "url" x)))
+              (created-at (gethash "created_at" x))
+              (ts (gethash "created_at_i" x))
+              (hn-base-url "https://news.ycombinator.com/item?id=%s")
+              (hn-story-url (format hn-base-url (gethash "story_id" x)))
+              (object-url (format hn-base-url (gethash "objectID" x)))
+              (points (gethash "points" x))
+              (num-comments (gethash "num_comments" x)))
+         (propertize
+          (replace-regexp-in-string " +" " " title)
+          'title title
+          'author author
+          'comment comment-text
+          'created-at created-at
+          'story-url story-url
+          'hn-story-url hn-story-url
+          'hn-object-url object-url
+          'ts ts
+          'points points
+          'num-comments num-comments))))))
+
 (defun consult-hn (&optional initial)
-  "Consult interface for searching on Hackernews."
+  "Consult interface for searching on Hackernews.
+INITIAL is for when it's called programmatically with an input."
   (interactive)
   (consult--read
    (consult--async-pipeline
     (consult--async-throttle)
-    (consult--dynamic-collection #'consult-hn--fetch)
+    #'consult-hn--async-source
     (consult--async-transform #'consult-hn--async-transform))
    :lookup #'consult-hn--async-lookup
    :state (lambda (action cand)
@@ -313,5 +385,3 @@ timestamp value must be in utc timezone."
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
-
-
