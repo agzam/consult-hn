@@ -26,7 +26,7 @@
 
 (defcustom consult-hn-transient-defaults
   '("--type=all" "--time=all")
-  "Default values for consult-hn transient."
+  "Default values for `consult-hn' transient."
   :type '(repeat string)
   :group 'consult-hn)
 
@@ -37,7 +37,7 @@
                            (transient-args 'consult-hn-transient))
   (message "Defaults saved"))
 
-(defun consult-hn--format-query (args)
+(defun consult-hn-transient--format-query (args)
   "Convert transient ARGS into HN search query format."
   (let ((query (or (transient-arg-value "--query=" args) ""))
         (tags '())
@@ -81,9 +81,9 @@
                       (string-join filters ","))))))
 
 (defun consult-hn-transient-action ()
-  "Execute consult-hn with current transient settings."
+  "Execute `consult-hn' with current transient settings."
   (interactive)
-  (let ((query (consult-hn--format-query (transient-args 'consult-hn-transient))))
+  (let ((query (consult-hn-transient--format-query (transient-args 'consult-hn-transient))))
     (consult-hn query)))
 
 

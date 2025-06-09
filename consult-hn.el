@@ -29,12 +29,12 @@
 (require 'json)
 
 (defgroup consult-hn nil
-  "Group for consult-hn package."
+  "Group for `consult-hn' package."
   :prefix "consult-hn"
   :group 'consult-extensions)
 
 (defcustom consult-hn-default-search-params '((typoTolerance false))
-  "Default parameters for consult-hn search."
+  "Default parameters for `consult-hn' search."
   :type 'alist
   :group 'consult-hn)
 
@@ -64,7 +64,7 @@
   "Valid fields for HN Algolia API.")
 
 (defvar consult-hn--history nil
-  "History of queries for consult-hn.")
+  "History of queries for `consult-hn'.")
 
 (cl-defun consult-hn-eww (&key story-url title hn-story-url author created-at hn-object-url num-comments points comment &allow-other-keys)
   "Open hackernews item in eww buffer.
@@ -365,7 +365,7 @@ INITIAL is for when it's called programmatically with an input."
                  ""))))
 
 (defun consult-hn--open (item)
-  "Default Embark action for consult-hn ITEM."
+  "Default Embark action for `consult-hn' ITEM."
   (thread-last
     (or item "")
     (text-properties-at 0)
@@ -375,13 +375,6 @@ INITIAL is for when it's called programmatically with an input."
 (when (featurep 'embark)
   (setf (alist-get 'consult-hn-result embark-default-action-overrides)
         #'consult-hn--open))
-
-(defun consult-hn-url-matching (query)
-  ""
-  (interactive)
-  (consult-hn (concat query " -- restrictSearchableAttributes=url")))
-
-;; (consult-hn-url-matching "meetup.com")
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
