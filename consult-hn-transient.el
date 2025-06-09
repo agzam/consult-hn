@@ -117,3 +117,6 @@
    ["Actions"
     ("C-s" "Save as default" consult-hn-transient-save-defaults :transient t)
     ("RET" "Search" consult-hn-transient-action :transient t)]])
+
+(provide 'consult-hn-transient)
+;;; consult-hn-transient.el ends here
