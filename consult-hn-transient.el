@@ -72,6 +72,10 @@
     (when-let ((points (transient-arg-value "--points=" args)))
       (push (format "numericFilters=points>%s" points) filters))
 
+    ;; Min comments
+    (when-let ((comments (transient-arg-value "--comments=" args)))
+      (push (format "numericFilters=comments>%s" comments) filters))
+
     ;; Build final query
     (concat query
             (when (or tags filters)
@@ -97,22 +101,24 @@
 
   [["Filters"
     ("t" "Type" "--type="
-     :choices ("all" "story" "comment"))
+     :choices ("story" "comment"))
     ("a" "Author" "--author="
      :prompt "Author username: ")]
 
-   ["Scope"
-    ("s" "Search in" "--scope="
-     :choices (("all" . "all")
-               ("url" . "url")
-               ("title" . "title")))]
-
-   ["Time"
+   [""
     ("r" "Range" "--time="
      :choices ("24h" "week" "month" "year" "all"))
     ("p" "Min points" "--points="
      :prompt "Minimum points: "
+     :reader transient-read-number-N0)
+    ("c" "Min comments" "--num_comments="
+     :prompt "Minimum number of comments: "
      :reader transient-read-number-N0)]
+
+   ["Scope"
+    ("s" "Search in" "--scope="
+     :choices (("url" . "url")
+               ("title" . "title")))]
 
    ["Actions"
     ("C-s" "Save as default" consult-hn-transient-save-defaults :transient t)
