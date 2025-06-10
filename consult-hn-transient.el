@@ -41,7 +41,8 @@
   "Convert transient ARGS into HN search query format."
   (let ((query (or (transient-arg-value "--query=" args) ""))
         (tags '())
-        (filters '()))
+        (filters '())
+        (numeric-filters '()))
 
     ;; Content type
     (pcase (transient-arg-value "--type=" args)
@@ -64,17 +65,22 @@
                          ("week" (* 7 86400))
                          ("month" (* 30 86400))
                          ("year" (* 365 86400)))))
-          (push (format "numericFilters=created_at_i>%d"
+          (push (format "created_at_i>%d"
                         (- (time-convert nil 'integer) seconds))
-                filters))))
+                numeric-filters))))
 
     ;; Min points
     (when-let ((points (transient-arg-value "--points=" args)))
-      (push (format "numericFilters=points>%s" points) filters))
+      (push (format "points>%s" points) numeric-filters))
 
     ;; Min comments
     (when-let ((comments (transient-arg-value "--comments=" args)))
-      (push (format "numericFilters=comments>%s" comments) filters))
+      (push (format "comments>%s" comments) numeric-filters))
+
+    ;; Combine numeric filters into a single parameter
+    (when numeric-filters
+      (push (format "numericFilters=%s" (string-join numeric-filters ","))
+            filters))
 
     ;; Build final query
     (concat query
