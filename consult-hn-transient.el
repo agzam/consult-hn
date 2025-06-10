@@ -74,8 +74,8 @@
       (push (format "points>%s" points) numeric-filters))
 
     ;; Min comments
-    (when-let ((comments (transient-arg-value "--comments=" args)))
-      (push (format "comments>%s" comments) numeric-filters))
+    (when-let ((comments (transient-arg-value "--num_comments=" args)))
+      (push (format "num_comments>%s" comments) numeric-filters))
 
     ;; Combine numeric filters into a single parameter
     (when numeric-filters
