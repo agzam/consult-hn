@@ -42,7 +42,13 @@
   (let ((query (or (transient-arg-value "--query=" args) ""))
         (tags '())
         (filters '())
-        (numeric-filters '()))
+        (numeric-filters '())
+        (url-matching (member "--url-matching" args)))
+
+    ;; Auto-enable URL matching if query looks like a URL
+    (when (and (not url-matching)
+               (string-match-p "^https?://" query))
+      (setq url-matching t))
 
     ;; Content type
     (pcase (transient-arg-value "--type=" args)
@@ -53,9 +59,9 @@
     (when-let ((author (transient-arg-value "--author=" args)))
       (push (concat "author_" author) tags))
 
-    ;; Search scope
-    (when-let ((scope (transient-arg-value "--scope=" args)))
-      (push (concat "restrictSearchableAttributes=" scope) filters))
+    ;; URL matching
+    (when url-matching
+      (push "restrictSearchableAttributes=url" filters))
 
     ;; Time range
     (when-let ((time (transient-arg-value "--time=" args)))
@@ -96,6 +102,17 @@
   (let ((query (consult-hn-transient--format-query (transient-args 'consult-hn-transient))))
     (consult-hn query)))
 
+(defun consult-hn-transient--query-reader (prompt initial-input history)
+  "Read query input and auto-enable URL matching if needed.
+PROMPT is the prompt string.
+INITIAL-INPUT is the initial input.
+HISTORY is the history variable."
+  (let ((query (read-string prompt initial-input history)))
+    ;; Auto-enable URL matching if query looks like a URL
+    (when (string-match-p "^https?://" query)
+      (unless (member "--url-matching" (transient-args 'consult-hn-transient))
+        (transient-set-value 'consult-hn-transient "--url-matching" "--url-matching")))
+    query))
 
 (transient-define-argument consult-hn-transient--type ()
   :description "Type"
@@ -119,12 +136,15 @@
 
   ["Search"
    :class transient-column
-   ("i" "Query" "--query=" :prompt "Search: ")]
+   ("i" "Query" "--query=" 
+    :prompt "Search: "
+    :reader consult-hn-transient--query-reader)]
 
   [["Filters"
     (consult-hn-transient--type)
     ("a" "Author" "--author="
-     :prompt "Author username: ")]
+     :prompt "Author username: ")
+    ("u" "URL matching" "--url-matching")]
 
    [""
     (consult-hn-transient--range)
@@ -134,11 +154,6 @@
     ("c" "Min comments" "--num_comments="
      :prompt "Minimum number of comments: "
      :reader transient-read-number-N0)]
-
-   ["Scope"
-    ("s" "Search in" "--scope="
-     :choices (("url" . "url")
-               ("title" . "title")))]
 
    ["Actions"
     ("C-s" "Save as default" consult-hn-transient-save-defaults :transient t)
