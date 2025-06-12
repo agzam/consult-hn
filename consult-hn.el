@@ -130,13 +130,13 @@ timestamp value must be in utc timezone."
   (when (and input (not (string-blank-p input)))
     (let* ((split (split-string input "--" nil " +"))
            (params (thread-last
-                     (when-let* ((parts (cadr split))
-                                 (parts (split-string parts "=" nil " +")))
-                       (cl-loop for (k v) on parts by #'cddr
-                                when (and k v
-                                          (not (string-blank-p k))
-                                          (not (string-blank-p v)))
-                                collect (list (intern k) (replace-regexp-in-string " +" "" v))))
+                     (when-let* ((parts (cadr split)))
+                       ;; Split by spaces first to get individual key=value pairs
+                       (let ((pairs (split-string parts " +" t)))
+                         (cl-loop for pair in pairs
+                                  when (string-match "\\([^=]+\\)=\\(.+\\)" pair)
+                                  collect (list (intern (match-string 1 pair))
+                                                (match-string 2 pair)))))
                      (seq-union consult-hn-default-search-params)
                      (seq-filter (lambda (x)
                                    (member (car x) consult-hn--api-allowed-keys)))))
@@ -309,7 +309,9 @@ RESULT is the parsed JSON response from the HN API."
                               (with-temp-buffer
                                 (insert comment-markup)
                                 (dom-texts (libxml-parse-html-region)))))
-              (title (or (gethash "title" x)
+              (title (or (geth
+
+ "title" x)
                          (gethash "story_title" x)))
               (story-url (or (gethash "story_url" x)
                              (gethash "url" x)))
