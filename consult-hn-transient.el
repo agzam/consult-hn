@@ -87,8 +87,8 @@
             (when (or tags filters)
               (concat " -- "
                       (when tags (format "tags=%s" (string-join tags ",")))
-                      (when (and tags filters) ",")
-                      (string-join filters ","))))))
+                      (when (and tags filters) " ")
+                      (string-join filters " "))))))
 
 (defun consult-hn-transient-action ()
   "Execute `consult-hn' with current transient settings."
