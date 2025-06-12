@@ -30,6 +30,9 @@
   :type '(repeat string)
   :group 'consult-hn)
 
+(defvar consult-hn-transient--url-matching-enabled nil
+  "Either to set restrictSearchableAttributes=url.")
+
 (defun consult-hn-transient-save-defaults ()
   "Save current transient values as defaults."
   (interactive)
@@ -43,12 +46,7 @@
         (tags '())
         (filters '())
         (numeric-filters '())
-        (url-matching (member "--url-matching" args)))
-
-    ;; Auto-enable URL matching if query looks like a URL
-    (when (and (not url-matching)
-               (string-match-p "^https?://" query))
-      (setq url-matching t))
+        (url-matching consult-hn-transient--url-matching-enabled))
 
     ;; Content type
     (pcase (transient-arg-value "--type=" args)
@@ -108,10 +106,8 @@ PROMPT is the prompt string.
 INITIAL-INPUT is the initial input.
 HISTORY is the history variable."
   (let ((query (read-string prompt initial-input history)))
-    ;; Auto-enable URL matching if query looks like a URL
-    (when (string-match-p "^https?://" query)
-      (unless (member "--url-matching" (transient-args 'consult-hn-transient))
-        (transient-set-value 'consult-hn-transient "--url-matching" "--url-matching")))
+    (setq consult-hn-transient--url-matching-enabled
+          (and (string-match-p "^https?://" query)))
     query))
 
 (transient-define-argument consult-hn-transient--type ()
@@ -130,21 +126,45 @@ HISTORY is the history variable."
   :argument-regexp "--time=\\(24h\\|week\\|month\\|year\\)"
   :choices '("24h" "week" "month" "year" "all"))
 
+(transient-define-infix consult-hn-transient--url-matching ()
+  :description (lambda ()
+                 (format "URL matching [%s]"
+                         (if consult-hn-transient--url-matching-enabled
+                             "✓" "")))
+  :class 'transient-lisp-variable
+  :variable 'consult-hn-transient--url-matching-enabled
+  :format " %k %d"
+  :reader (lambda (&rest _)
+            (setq consult-hn-transient--url-matching-enabled
+                  (not consult-hn-transient--url-matching-enabled)))
+  :key "u")
+
 (transient-define-prefix consult-hn-transient ()
   "Search Hacker News with filters."
   :value consult-hn-transient-defaults
 
   ["Search"
    :class transient-column
-   ("i" "Query" "--query=" 
+   ("i" "Query" "--query="
     :prompt "Search: "
-    :reader consult-hn-transient--query-reader)]
+    :reader consult-hn-transient--query-reader
+    :init-value (lambda (obj)
+                  (let* ((sym (symbol-at-point))
+                         (query (if (use-region-p)
+                                    (buffer-substring-no-properties
+                                     (region-beginning)
+                                     (region-end))
+                                  (when sym (symbol-name sym)))))
+                    (when query
+                      (setq consult-hn-transient--url-matching-enabled
+                            (string-match-p "^https?://" query))
+                      (oset obj value query)))))]
 
   [["Filters"
     (consult-hn-transient--type)
     ("a" "Author" "--author="
      :prompt "Author username: ")
-    ("u" "URL matching" "--url-matching")]
+    (consult-hn-transient--url-matching)]
 
    [""
     (consult-hn-transient--range)
