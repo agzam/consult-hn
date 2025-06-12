@@ -97,6 +97,22 @@
     (consult-hn query)))
 
 
+(transient-define-argument consult-hn-transient--type ()
+  :description "Type"
+  :class 'transient-switches
+  :key "t"
+  :argument-format "--type=%s"
+  :argument-regexp "--type=\\(story\\|comment\\)"
+  :choices '("story" "comment"))
+
+(transient-define-argument consult-hn-transient--range ()
+  :description "Range"
+  :class 'transient-switches
+  :key "r"
+  :argument-format "--time=%s"
+  :argument-regexp "--time=\\(24h\\|week\\|month\\|year\\)"
+  :choices '("24h" "week" "month" "year" "all"))
+
 (transient-define-prefix consult-hn-transient ()
   "Search Hacker News with filters."
   :value consult-hn-transient-defaults
@@ -106,14 +122,12 @@
    ("i" "Query" "--query=" :prompt "Search: ")]
 
   [["Filters"
-    ("t" "Type" "--type="
-     :choices ("story" "comment"))
+    (consult-hn-transient--type)
     ("a" "Author" "--author="
      :prompt "Author username: ")]
 
    [""
-    ("r" "Range" "--time="
-     :choices ("24h" "week" "month" "year" "all"))
+    (consult-hn-transient--range)
     ("p" "Min points" "--points="
      :prompt "Minimum points: "
      :reader transient-read-number-N0)
