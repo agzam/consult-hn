@@ -24,21 +24,8 @@
 (require 'transient)
 (require 'consult-hn)
 
-(defcustom consult-hn-transient-defaults
-  '("--type=all" "--time=all")
-  "Default values for `consult-hn' transient."
-  :type '(repeat string)
-  :group 'consult-hn)
-
 (defvar consult-hn-transient--url-matching-enabled nil
   "Either to set restrictSearchableAttributes=url.")
-
-(defun consult-hn-transient-save-defaults ()
-  "Save current transient values as defaults."
-  (interactive)
-  (customize-save-variable 'consult-hn-transient-defaults
-                           (transient-args 'consult-hn-transient))
-  (message "Defaults saved"))
 
 (defun consult-hn-transient--format-query (args)
   "Convert transient ARGS into HN search query format."
@@ -141,8 +128,6 @@ HISTORY is the history variable."
 
 (transient-define-prefix consult-hn-transient ()
   "Search Hacker News with filters."
-  :value consult-hn-transient-defaults
-
   ["Search"
    :class transient-column
    ("i" "Query" "--query="
@@ -176,7 +161,6 @@ HISTORY is the history variable."
      :reader transient-read-number-N0)]
 
    ["Actions"
-    ("C-s" "Save as default" consult-hn-transient-save-defaults :transient t)
     ("RET" "Search" consult-hn-transient-action :transient t)]])
 
 (provide 'consult-hn-transient)
