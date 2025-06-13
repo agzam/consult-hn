@@ -45,6 +45,8 @@ You can omit either parameters or the search-term. Parameters are key/value pair
 
 You can use keys listed in [[https://hn.algolia.com/api][the official API documentation]]
 
+[[https://www.youtube.com/watch?v=ud3Gmxg5UZg][Here's a YouTube video]] demoing it (7 minutes)
+
 ** Examples:
 
 ~#Emacs~ - will search for everything that contains "Emacs"
