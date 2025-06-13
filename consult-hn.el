@@ -27,6 +27,7 @@
 (require 'url)
 (require 'url-http)
 (require 'json)
+(require 'dom)
 
 (defgroup consult-hn nil
   "Group for `consult-hn' package."
