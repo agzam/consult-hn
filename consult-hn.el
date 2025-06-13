@@ -203,6 +203,8 @@ timestamp value must be in utc timezone."
                                            (replace-regexp-in-string " +" " " r-title)))))))))
       found)))
 
+(defvar url-http-end-of-headers) ; used by url-http
+
 (defun consult-hn--fetch-page-async (input page async expected-search &optional buffer-callback)
   "Fetch a single page asynchronously.
 INPUT is the search query string.
@@ -230,6 +232,11 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                                 (equal input expected-search))
                        (if-let ((error (plist-get status :error)))
                            (message "HN fetch error: %s" error)
+                         ;; When `url-retrieve` fetches an HTTP resource, it:
+                         ;; 1. Creates a buffer with the full HTTP response (headers + body)
+                         ;; 2. Sets `url-http-end-of-headers` as a marker pointing to the position right
+                         ;; after the HTTP headers end (typically after the blank line that separates
+                         ;; headers from body)
                          (when (and url-http-end-of-headers
                                     (marker-position url-http-end-of-headers))
                            (goto-char url-http-end-of-headers)
@@ -373,6 +380,7 @@ INITIAL is for when it's called programmatically with an input."
     consult-hn--plist-keywordize
     (apply consult-hn-browse-fn)))
 
+(defvar embark-default-action-overrides)
 (when (featurep 'embark)
   (setf (alist-get 'consult-hn-result embark-default-action-overrides)
         #'consult-hn--open))
