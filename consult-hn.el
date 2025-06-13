@@ -309,9 +309,7 @@ RESULT is the parsed JSON response from the HN API."
                               (with-temp-buffer
                                 (insert comment-markup)
                                 (dom-texts (libxml-parse-html-region)))))
-              (title (or (geth
-
- "title" x)
+              (title (or (gethash "title" x)
                          (gethash "story_title" x)))
               (story-url (or (gethash "story_url" x)
                              (gethash "url" x)))
