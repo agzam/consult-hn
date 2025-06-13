@@ -256,9 +256,9 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                                    (consult-hn--fetch-page-async
                                     input (1+ current-page) async expected-search buffer-callback)))
                              (json-end-of-file
-                              (message "HN: JSON parse interrupted"))
+                              (print "HN: JSON parse interrupted"))
                              (error
-                              (message "HN parse error: %s" err)))))))
+                              (print (concat "HN parse error: " err))))))))
                    nil t)))
       (when (and buffer buffer-callback)
         (funcall buffer-callback buffer)))))
