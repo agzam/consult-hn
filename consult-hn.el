@@ -318,7 +318,8 @@ RESULT is the parsed JSON response from the HN API."
                                 (insert comment-markup)
                                 (dom-texts (libxml-parse-html-region)))))
               (title (or (gethash "title" x)
-                         (gethash "story_title" x)))
+                         (gethash "story_title" x)
+                         ""))
               (story-url (or (gethash "story_url" x)
                              (gethash "url" x)))
               (created-at (gethash "created_at" x))
@@ -328,18 +329,20 @@ RESULT is the parsed JSON response from the HN API."
               (object-url (format hn-base-url (gethash "objectID" x)))
               (points (gethash "points" x))
               (num-comments (gethash "num_comments" x)))
-         (propertize
-          (replace-regexp-in-string " +" " " title)
-          'title title
-          'author author
-          'comment comment-text
-          'created-at created-at
-          'story-url story-url
-          'hn-story-url hn-story-url
-          'hn-object-url object-url
-          'ts ts
-          'points points
-          'num-comments num-comments))))))
+         (when title
+           (propertize
+            (replace-regexp-in-string " +" " " title)
+            'title title
+            'author author
+            'comment comment-text
+            'created-at created-at
+            'story-url story-url
+            'hn-story-url hn-story-url
+            'hn-object-url object-url
+            'ts ts
+            'points points
+            'num-comments num-comments)))))
+    (seq-filter #'identity)))
 
 (defun consult-hn (&optional initial)
   "Consult interface for searching on Hacker News.
