@@ -1,4 +1,4 @@
-;;; consult-hn.el --- Hackernews search with Consult -*- lexical-binding: t; -*-
+;;; consult-hn.el --- Hacker News search with Consult -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2025 Ag Ibragimov
 ;;
@@ -68,7 +68,7 @@
   "History of queries for `consult-hn'.")
 
 (cl-defun consult-hn-eww (&key story-url title hn-story-url author created-at hn-object-url num-comments points comment &allow-other-keys)
-  "Open hackernews item in eww buffer.
+  "Open hacker News item in eww buffer.
 STORY-URL TITLE HN-STORY-URL AUTHOR CREATED-AT
 HN-OBJECT-URL NUM-COMMENTS POINTS COMMENT - are all the HN-relevant things."
   (cl-labels ((after-render-a (ofn status url &optional point buffer encode)
@@ -342,7 +342,7 @@ RESULT is the parsed JSON response from the HN API."
           'num-comments num-comments))))))
 
 (defun consult-hn (&optional initial)
-  "Consult interface for searching on Hackernews.
+  "Consult interface for searching on Hacker News.
 INITIAL is for when it's called programmatically with an input."
   (interactive)
   (consult--read

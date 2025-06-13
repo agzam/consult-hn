@@ -1,7 +1,7 @@
-#+title: [[https://github.com/minad/consult][Consult]] extension for searching on HackerNews
+#+title: [[https://github.com/minad/consult][Consult]] extension for searching on Hacker News
 
 * Why.
-Alright, real talk time. Why are you here? Why do you need HackerNews in Emacs? What's next, Tinder in Vim? Instagram in sed?
+Alright, real talk time. Why are you here? Why do you need Hacker News in Emacs? What's next, Tinder in Vim? Instagram in sed?
 
 Listen, I get it - you've already got your email, calendar, therapist, and pizza delivery service running in Emacs. But at some point we need to draw the line.
 

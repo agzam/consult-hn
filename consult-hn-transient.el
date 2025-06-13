@@ -1,4 +1,4 @@
-;;; consult-hn-transient.el --- Hackernews search with Consult -*- lexical-binding: t; -*-
+;;; consult-hn-transient.el --- Hacker News search with Consult -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2025 Ag Ibragimov
 ;;
