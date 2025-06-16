@@ -8,16 +8,18 @@
 ;; Version: 1.0.0
 ;; Keywords: search extensions
 ;; Homepage: https://github.com/agzam/consult-hn
-;; Package-Requires: ((emacs "29.4") (consult "2.0") (ts "0.3"))
+;; Package-Requires: ((emacs "29.4") (consult "2.0") (ts "0.3") (transient "0.9"))
+;;
+;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:
 ;;
-;;  Description
-;;
-;;  This is an extension for Consult
-;;  https://github.com/minad/consult
+;;  This is an extension for https://github.com/minad/consult, for
+;;  searching on Hacker News via its public API, finding stories and
+;;  comments matching a query, date range, number of comments and
+;;  points.
 ;;
 ;;; Code:
 
@@ -245,13 +247,13 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                                       (json-array-type 'list)
                                       (result (json-read))
                                       (rows (consult-hn--process-results result))
-                                      (nbPages (gethash "nbPages" result))
+                                      (nb-pages (gethash "nbPages" result))
                                       (current-page (gethash "page" result)))
                                  ;; Send results only if still current search
                                  (when (and rows (equal input expected-search))
                                    (funcall async rows))
                                  ;; Fetch next page if still current search
-                                 (when (and (< (1+ current-page) nbPages)
+                                 (when (and (< (1+ current-page) nb-pages)
                                             (equal input expected-search))
                                    (consult-hn--fetch-page-async
                                     input (1+ current-page) async expected-search buffer-callback)))
@@ -268,14 +270,13 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
 ASYNC is the callback function to send results downstream."
   (let ((request-buffers nil)
         (page 0)
-        (nbPages nil)
         (current-search nil))  ; Track current search term
     (lambda (action)
       (pcase action
         ((pred stringp)
          ;; New search - update current search term
          (setq current-search action)
-         (setq page 0 nbPages nil)
+         (setq page 0 nb-pages nil)
 
          ;; Cancel existing requests
          (dolist (buf request-buffers)

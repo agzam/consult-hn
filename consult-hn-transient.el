@@ -10,14 +10,16 @@
 ;; Homepage: https://github.com/agzam/consult-hn
 ;; Package-Requires: ((emacs "29.4") (consult "2.0") (ts "0.3") (transient "0.9"))
 ;;
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;;
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:
 ;;
-;;  Description
-;;
-;;  This is an extension for Consult
-;;  https://github.com/minad/consult
+;;  This is an extension for https://github.com/minad/consult, for
+;;  searching on Hacker News via its public API, finding stories and
+;;  comments matching a query, date range, number of comments and
+;;  points.
 ;;
 ;;; Code:
 
