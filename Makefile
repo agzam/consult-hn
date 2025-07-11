@@ -40,4 +40,5 @@ check-compile: deps
 	--eval "(package-install 'ts)" \
 	--eval "(setq byte-compile-error-on-warn t)" \
 	--eval "(add-to-list 'load-path \".\")" \
-	--eval "(byte-compile-file \"consult-hn.el\")"
+	--eval "(byte-compile-file \"consult-hn.el\")" \
+    --eval "(byte-compile-file \"consult-hn-transient.el\")"
