@@ -206,6 +206,7 @@ timestamp value must be in utc timezone."
       found)))
 
 (defvar url-http-end-of-headers) ; used by url-http
+(defvar nb-pages)
 
 (defun consult-hn--fetch-page-async (input page async expected-search &optional buffer-callback)
   "Fetch a single page asynchronously.
