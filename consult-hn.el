@@ -206,7 +206,7 @@ timestamp value must be in utc timezone."
       found)))
 
 (defvar url-http-end-of-headers) ; used by url-http
-(defvar nb-pages)
+(defvar consult-hn--nb-pages nil "Stores number of pages per request between calls.")
 
 (defun consult-hn--fetch-page-async (input page async expected-search &optional buffer-callback)
   "Fetch a single page asynchronously.
@@ -248,13 +248,13 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                                       (json-array-type 'list)
                                       (result (json-read))
                                       (rows (consult-hn--process-results result))
-                                      (nb-pages (gethash "nbPages" result))
+                                      (consult-hn--nb-pages (gethash "nbPages" result))
                                       (current-page (gethash "page" result)))
                                  ;; Send results only if still current search
                                  (when (and rows (equal input expected-search))
                                    (funcall async rows))
                                  ;; Fetch next page if still current search
-                                 (when (and (< (1+ current-page) nb-pages)
+                                 (when (and (< (1+ current-page) consult-hn--nb-pages)
                                             (equal input expected-search))
                                    (consult-hn--fetch-page-async
                                     input (1+ current-page) async expected-search buffer-callback)))
@@ -277,7 +277,7 @@ ASYNC is the callback function to send results downstream."
         ((pred stringp)
          ;; New search - update current search term
          (setq current-search action)
-         (setq page 0 nb-pages nil)
+         (setq page 0 consult-hn--nb-pages nil)
 
          ;; Cancel existing requests
          (dolist (buf request-buffers)
