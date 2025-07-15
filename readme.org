@@ -26,15 +26,14 @@ So, this is a package that packages some functionality for another (very popular
 This package searches through HN using public Algolia API.
 
 * How.
-You can install the package through your favorite Emacs package manager. For now you'd just recipe-it from GitHub directly. If they let me publish this crap on MELPA, I'll update the instructions.
-
-Doom's way:
+You can install the package through your favorite Emacs package manager, it's on [[https://melpa.org/#/consult-hn][MELPA]],
+or you can recipe-it from GitHub directly, e.g., for Doom:
 
 #+begin_src elisp
 (package! hnreader :recipe (:host github :repo "agzam/consult-hn"))
 #+end_src
 
-Then you can just run ~(consult-hn-transient)~ command /(UX-convenient option)/, or (more directly) — ~(consult-hn)~ command.
+Then you can just run ~(consult-hn-transient)~ — UX-convenient option, or (more directly) — ~(consult-hn)~ command.
 
 Type a query and it will search for both comments and stories, by default sorting them with the latest first.
 
