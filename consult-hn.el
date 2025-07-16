@@ -101,7 +101,7 @@ HN-OBJECT-URL NUM-COMMENTS POINTS COMMENT - are all the HN-relevant things."
                            (libxml-parse-html-region)))))
                  (advice-remove 'eww-render #'after-render-a))))
     (advice-add 'eww-render :around #'after-render-a)
-    (eww (or story-url hn-story-url) :new-buffer)))
+    (eww (or hn-story-url story-url) :new-buffer)))
 
 (defun consult-hn--fill-string (str &optional width justify)
   "Fills the STR string with WIDTH and JUSTIFY options."
