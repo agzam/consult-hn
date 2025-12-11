@@ -9,6 +9,8 @@
 ;; Homepage: https://github.com/agzam/consult-hn
 ;; Package-Requires: ((emacs "29"))
 ;;
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;;
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:

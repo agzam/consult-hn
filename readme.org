@@ -1,7 +1,7 @@
 #+title: [[https://github.com/minad/consult][Consult]] extension for searching on Hacker News
 [[https://github.com/agzam/consult-hn/actions/workflows/run-tests.yml][https://github.com/agzam/consult-hn/actions/workflows/run-tests.yml/badge.svg]]
 
-* Why.
+* Why ...
 Alright, real talk time. Why are you here? Why do you need Hacker News in Emacs? What's next, Tinder in Vim? Instagram in sed?
 
 Listen, I get it - you've already got your email, calendar, therapist, and pizza delivery service running in Emacs. But at some point we need to draw the line.
@@ -18,14 +18,14 @@ a) Because, why not?
 
 b) I just needed to solve this weird itch for myself - very often I get a link to a blog post, a book or a video. And sometimes, I'm curious what HN comments say about that thing. Also, sometimes I'd like to find comments I posted myself long ago, just to get reassurance of how stupid I was back then and hopefully not getting any stupider now.
 
-* What.
+* What ...
 This is an Emacs extension that extends an extension. Because Emacs is extensible beyond imaginable limits, it allows you to extend what's already been extended. So, in order to minimize confusion (or vice versa), we Emacsians do not call them "extensions". We call them "packages".
 
 So, this is a package that packages some functionality for another (very popular and awesome) package called Consult. If you love Emacs, but not using Consult - stop hugging your toaster, close this page and go install it, asap!
 
 This package searches through HN using public Algolia API.
 
-* How.
+* How ...
 You can install the package through your favorite Emacs package manager, it's on [[https://melpa.org/#/consult-hn][MELPA]],
 or you can recipe-it from GitHub directly, e.g., for Doom:
 
