@@ -2,7 +2,7 @@
 
 Companion to `param-encapsulation-spec.md`. The spec says what and why; this says how, with the environment facts and acceptance gates. Branch `param-encapsulation`. Both documents are temporary and get removed before merge.
 
-Phases 0 and 1 are done and committed. Phase 2 is done up to and including step 2.5, uncommitted at the time of writing. Step 2.6 and Phase 3 remain.
+Phases 0, 1 and 2 are done. Phase 3 remains, and is smaller than section 4 makes it sound.
 
 State of play: work happens at the tip of `param-encapsulation`, which is ahead of `main` and has never been pushed; Phase 1 landed in `d8028fc` and Phase 0 in `23f5a27` and `c9558fc`, so `git log 23f5a27~1..` is the whole story. Confirm all three gates below on arrival before building anything on top of them, and if one is red, say so instead of working around it.
 
@@ -119,6 +119,10 @@ Live, in a real interactive Emacs against the real endpoint: a session opened on
 Step 2.6, the transient onto the state object. Blocked on Q4. Infixes read their initial values from the plist and write back on set, `consult-hn-transient-action` only opens the session, and `consult-hn-transient--format-query` is deleted. R1 is that this is the largest single piece with no harness today, so the state-to-arguments and arguments-to-state functions are pure and tested directly while the transient itself stays thin.
 
 Gate: unit specs both directions, state to infix values and infix values back to state, including the round trip. This is also the moment `consult-hn--input->params` loses its last reason to exist, since nothing produces the string any more; decide there whether the parser and its specs go with it.
+
+Done. Q4 answered as optional front door. The bridge is one alist saying how each parameter is spelled and two pure functions over it, so the menu itself is eight named infixes, a `:init-value` shared by all of them, and a two-line action. Written back when the search runs rather than as each infix is set: write-on-set means a class per infix class and a `transient-infix-set` method reaching into the plist, which is exactly what R1 says not to do, and it buys only that abandoning the menu still changes the state. `consult-hn--input->params` went, since nothing had called it since Phase 1; the cases its specs pinned moved onto `consult-hn--legacy-pairs`, which is where the legacy syntax actually lives now.
+
+Two things worth keeping for next time. The menu is now covered by an e2e scenario that opens it, presses the key, searches and checks the session came up parameterised, which is the harness R1 said did not exist; it discriminates, since breaking the argument reading turns three of its checks red. And because the unit suite now loads `consult-hn-transient.el`, and CI runs Emacs 29.4 and 30.1 with the transient they bundle rather than the 0.9 the package declares, the suite was run against those two versions as well by putting `lisp/transient.el` from the matching Emacs release tag on the load path. It passes on 0.4.3, 0.7.2.2 and the 0.13.3 that Emacs 31 bundles. Note that adding transient to `make deps` would achieve nothing: it is built in, so `package-install` declines.
 
 ## 4. Phase 3, input semantics and docs
 

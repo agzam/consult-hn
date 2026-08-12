@@ -20,6 +20,7 @@
 (require 'vertico)
 (require 'orderless)
 (require 'consult-hn)
+(require 'consult-hn-transient)
 (require 'consult-hn-e2e)
 
 (vertico-mode 1)

@@ -400,22 +400,6 @@ someone may have the syntax in a keybinding."
              collect (list (intern (match-string 1 pair))
                            (match-string 2 pair)))))
 
-(defun consult-hn--input->params (input)
-  "Turn INPUT into a proper query string."
-  (when (and input (not (string-blank-p input)))
-    (let* ((params (thread-last
-                     (consult-hn--legacy-pairs input)
-                     (seq-union consult-hn-default-search-params)
-                     (seq-filter (lambda (x)
-                                   (memq (car x) consult-hn--api-allowed-keys)))))
-           ;; deliberately raw: `url-build-query-string' hexifies every
-           ;; value on the way out, so encoding here escapes the escapes
-           ;; and the API is asked for a query nobody wrote
-           (query (car-safe (consult-hn--input-split input)))
-           (_ (unless (string-blank-p query)
-                (setf (alist-get 'query params) (list query)))))
-      (cl-remove-duplicates params :key #'car))))
-
 (defun consult-hn--request-url (input page)
   "Request URL for INPUT at PAGE under the current parameter state.
 INPUT carries the query; a legacy ` -- key=value' suffix is layered

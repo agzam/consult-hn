@@ -21,6 +21,7 @@
 
 (require 'buttercup)
 (require 'consult-hn)
+(require 'consult-hn-transient)
 
 (describe "consult-hn--fill-string"
   (it "wraps long strings"
@@ -276,47 +277,24 @@
       (expect url :to-match "tags=front_page")
       (expect url :to-match "page=1"))))
 
-(describe "consult-hn--input->params"
-  (it "handles nil and blank strings"
-    (expect (consult-hn--input->params nil) :to-equal nil)
-    (expect (consult-hn--input->params "") :to-equal nil))
-  (it "basic input gets turn into query"
-    (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--input->params "foo") :to-equal '((query "foo")))))
-  (it "basic input with separator but no additional params"
-    (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--input->params "foo --") :to-equal '((query "foo")))))
-  (it "multiple tags properly parse"
-    (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--input->params "foo -- tags=(story,author_boo)")
-              :to-equal '((query "foo") (tags "(story,author_boo)")))
-      (expect (consult-hn--input->params "foo -- tags=story,author_boo")
-              :to-equal '((query "foo") (tags "story,author_boo")))))
-  (it "default params accounted for"
-    (let ((consult-hn-default-search-params '((hitsPerPage 125) (tags "comment"))))
-      (expect (consult-hn--input->params "foo --")
-              :to-equal '((query "foo") (hitsPerPage 125) (tags "comment")))))
-  (it "empty query allowed"
-    (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--input->params "-- tags=front_page")
-              :to-equal '((tags "front_page")))))
-  (it "leaves the query for the query builder to encode"
-    ;; a two-word query used to go out as query=a%2520b and match nothing
-    (let ((consult-hn-default-search-params nil))
-      (expect (consult-hn--input->params "elpaca emacs")
-              :to-equal '((query "elpaca emacs")))
-      (expect (url-build-query-string (consult-hn--input->params "elpaca emacs"))
-              :to-equal "query=elpaca%20emacs")))
+(describe "consult-hn--legacy-pairs"
+  ;; the ` -- key=value' suffix is undocumented and unwarned, but the
+  ;; package is published and someone may have it in a keybinding
+  (it "finds nothing in an input that spells out no parameters"
+    (expect (consult-hn--legacy-pairs "foo") :to-be nil)
+    (expect (consult-hn--legacy-pairs "foo --") :to-be nil))
 
-  (it "encodes query punctuation exactly once"
-    (let ((consult-hn-default-search-params nil))
-      (expect (url-build-query-string (consult-hn--input->params "c++ & rust"))
-              :not :to-match "%25")))
+  (it "reads the pairs the suffix spells out"
+    (expect (consult-hn--legacy-pairs "foo -- tags=story,author_boo")
+            :to-equal '((tags "story,author_boo")))
+    (expect (consult-hn--legacy-pairs "foo -- tags=(story,author_boo)")
+            :to-equal '((tags "(story,author_boo)")))
+    (expect (consult-hn--legacy-pairs "foo -- tags=story numericFilters=points>10")
+            :to-equal '((tags "story") (numericFilters "points>10"))))
 
-  (it "bogus keys get removed"
-    (let ((consult-hn-default-search-params '((hitsPerPage 125))))
-      (expect (consult-hn--input->params "foo -- zop=120")
-              :to-equal '((query "foo") (hitsPerPage 125))))))
+  (it "reads them with no query in front of them at all"
+    (expect (consult-hn--legacy-pairs "-- tags=front_page")
+            :to-equal '((tags "front_page")))))
 
 (describe "consult-hn--request-url"
   (it "sends the query from the input under the current state"
@@ -339,6 +317,9 @@
 
   (it "keeps the query out of the legacy suffix"
     (expect (consult-hn--request-url "foo -- tags=story" 0) :to-match "query=foo"))
+
+  (it "drops a legacy key the API would not accept"
+    (expect (consult-hn--request-url "foo -- zop=120" 0) :not :to-match "zop"))
 
   (it "keeps the front_page endpoint inference for a legacy tag"
     ;; the state knows nothing of front-page here; only the tag says so
@@ -745,6 +726,90 @@
       (expect (consult-hn--params-searchable-p
                (apply #'consult-hn-tests--params params))
               :to-be t))))
+
+(describe "the transient and the parameter state"
+  (defvar consult-hn-tests--saved-params)
+  (before-each
+    (setq consult-hn-tests--saved-params consult-hn--params))
+  (after-each
+    (setq consult-hn--params consult-hn-tests--saved-params))
+
+  (it "spells every parameter of the model as an argument"
+    (expect (consult-hn-transient--args
+             (consult-hn-tests--params
+              :query "emacs lisp" :type 'story :author "pg" :points 100
+              :comments 25 :range 'week :front-page t :url-match t
+              :sort 'relevance))
+            :to-equal '("--query=emacs lisp" "--type=story" "--author=pg"
+                        "--points=100" "--num_comments=25" "--time=week"
+                        "--front-page" "--url-match" "--sort=relevance")))
+
+  (it "says nothing about a state left at its defaults"
+    (expect (consult-hn-transient--args (consult-hn-tests--params)) :to-be nil)
+    (expect (consult-hn-transient--args (consult-hn-tests--params :author "  "))
+            :to-be nil))
+
+  (it "reads every argument back into the state"
+    (expect (consult-hn-transient--params
+             '("--query=emacs" "--type=comment" "--author=pg" "--points=10"
+               "--num_comments=5" "--time=24h" "--front-page" "--url-match"
+               "--sort=date"))
+            :to-equal '(:query "emacs" :type comment :author "pg" :points 10
+                        :comments 5 :range 24h :front-page t :url-match t
+                        :sort date)))
+
+  (it "reads an empty menu back as the default state"
+    (expect (consult-hn-transient--params nil)
+            :to-equal (consult-hn-tests--params)))
+
+  (it "round trips a full house, and the defaults"
+    (dolist (params (list (consult-hn-tests--params)
+                          (consult-hn-tests--params :type 'story)
+                          (consult-hn-tests--params :range 'year :sort 'date)
+                          (consult-hn-tests--params
+                           :query "emacs lisp" :type 'comment :author "pg"
+                           :points 100 :comments 25 :range 'month
+                           :front-page t :url-match t :sort 'relevance)))
+      (expect (consult-hn-transient--params
+               (consult-hn-transient--args params))
+              :to-equal params)))
+
+  (it "takes a query that is a URL to mean matching on URLs"
+    ;; what the menu has always done, now a rule rather than a variable
+    ;; the query reader sets behind everyone's back
+    (expect (plist-get (consult-hn-transient--params
+                        '("--query=https://example.com/x"))
+                       :url-match)
+            :to-be t)
+    (expect (plist-get (consult-hn-transient--params '("--query=example.com"))
+                       :url-match)
+            :to-be nil))
+
+  (it "seeds its infixes from the state"
+    (setq consult-hn--params (consult-hn-tests--params
+                              :type 'comment :author "pg" :points 100
+                              :front-page t))
+    (dolist (row '((consult-hn-transient--type "--type=comment")
+                   (consult-hn-transient--author "pg")
+                   (consult-hn-transient--points "100")
+                   (consult-hn-transient--front-page "--front-page")
+                   (consult-hn-transient--range nil)))
+      (let* ((obj (get (car row) 'transient--suffix))
+             (saved (and (slot-boundp obj 'value) (oref obj value))))
+        (unwind-protect
+            (progn
+              (funcall (oref obj init-value) obj)
+              (expect (oref obj value) :to-equal (cadr row)))
+          (oset obj value saved)))))
+
+  (it "searches on what the menu says, and keeps it as the state"
+    (spy-on 'transient-args :and-return-value '("--query=emacs" "--type=story"))
+    (spy-on 'consult-hn)
+    (consult-hn-transient-action)
+    (expect (plist-get consult-hn--params :type) :to-equal 'story)
+    (expect (plist-get consult-hn--params :query) :to-equal "emacs")
+    ;; the session takes the query from the state it was just handed
+    (expect 'consult-hn :to-have-been-called-with)))
 
 (describe "consult-hn--time-ago"
   ;; the float-time spy works this way: you add some time to a given

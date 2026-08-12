@@ -28,6 +28,7 @@
 (defvar vertico-count)
 (defvar vertico--candidates-ov)
 (defvar url-http-end-of-headers)
+(defvar transient--prefix)
 
 (defvar consult-hn-e2e-results-file
   (expand-file-name "consult-hn-e2e-results.txt"
@@ -732,6 +733,47 @@ unchanged text reaches the pipeline through the handle or not at all."
          (format "%S" consult-hn--params))
         (funcall k))))))
 
+(defun consult-hn-e2e--scenario-transient (k)
+  "The menu opens a session under the parameters it was set to.
+Driven on the keys a user presses, since the menu is the one piece with
+no other harness: the state it hands over is only as good as the
+arguments the real infixes produce."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn-transient)
+  (consult-hn-e2e--await
+   "S12 the menu opens"
+   (lambda () (and transient--prefix t))
+   (lambda (_)
+     ;; t cycles the type on to story, RET searches on it
+     (consult-hn-e2e--keys "t RET")
+     (consult-hn-e2e--await
+      "S12 the session opens on what the menu was set to"
+      (lambda () (seq-some (lambda (c) (string-match-p "Tagged story" c))
+                           (consult-hn-e2e--candidates)))
+      (lambda (_)
+        (consult-hn-e2e--check
+         "S12 the chips say what the menu said"
+         (equal (consult-hn-e2e--chips) " [story]")
+         (format "%S" (consult-hn-e2e--chips)))
+        (consult-hn-e2e--check
+         "S12 the menu wrote its parameters into the state"
+         (eq 'story (plist-get consult-hn--params :type))
+         (format "%S" consult-hn--params))
+        (consult-hn-e2e--keys "C-g")
+        (consult-hn-e2e--await
+         "S12 the session closes, leaving the menu standing"
+         (lambda () (zerop (minibuffer-depth)))
+         (lambda (_)
+           (consult-hn-e2e--check
+            "S12 no chips left in the minibuffer that gets reused"
+            (eql 0 (consult-hn-e2e--stale-chips))
+            (format "%S" (consult-hn-e2e--stale-chips)))
+           (consult-hn-e2e--keys "C-g")
+           (consult-hn-e2e--await
+            "S12 the menu goes away when dismissed"
+            (lambda () (null transient--prefix))
+            (lambda (_) (funcall k))))))))))
+
 ;;; Runner
 
 (defvar consult-hn-e2e--scenarios
@@ -745,7 +787,8 @@ unchanged text reaches the pipeline through the handle or not at all."
         #'consult-hn-e2e--scenario-chips
         #'consult-hn-e2e--scenario-parameter-key
         #'consult-hn-e2e--scenario-recursive-read
-        #'consult-hn-e2e--scenario-from-lisp)
+        #'consult-hn-e2e--scenario-from-lisp
+        #'consult-hn-e2e--scenario-transient)
   "Ordered; scenarios 2 and 3 observe the session opened by the first.")
 
 (defun consult-hn-e2e--run-scenarios (scenarios done)
