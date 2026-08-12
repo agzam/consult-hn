@@ -107,6 +107,20 @@ the main one by looking at the display alone."
               (consult-hn-e2e--hit 23 nil "Other story")))
   "One page, titled apart, so a second search is visible as such.")
 
+(defconst consult-hn-e2e--default-params (copy-sequence consult-hn--params)
+  "The parameter state every scenario starts from.
+The state outlives a session by design, so without this the scenarios
+would inherit each other's parameters, and so would the second round.")
+
+(defun consult-hn-e2e--tagged-pages (tags)
+  "One page of hits titled after TAGS.
+A parameterised search is then visible in the display alone, and the
+title says which parameter it came back for."
+  (let ((label (format "Tagged %s" tags)))
+    (list (list (consult-hn-e2e--hit 31 nil label)
+                (consult-hn-e2e--hit 32 "a tagged reply" label)
+                (consult-hn-e2e--hit 33 nil label)))))
+
 (defun consult-hn-e2e--url-page (url)
   "Page number requested by URL."
   (if (string-match "[?&]page=\\([0-9]+\\)" url)
@@ -119,11 +133,19 @@ the main one by looking at the display alone."
       (url-unhex-string (match-string 1 url))
     ""))
 
+(defun consult-hn-e2e--url-tags (url)
+  "Tags URL asks for, empty when it asks for none."
+  (if (string-match "[?&]tags=\\([^&]*\\)" url)
+      (url-unhex-string (match-string 1 url))
+    ""))
+
 (defun consult-hn-e2e--url-pages (url)
   "Fixture pages URL is served from."
-  (if (equal (consult-hn-e2e--url-query url) consult-hn-e2e--other-query)
-      consult-hn-e2e--other-pages
-    consult-hn-e2e--pages))
+  (let ((tags (consult-hn-e2e--url-tags url)))
+    (cond ((not (string-empty-p tags)) (consult-hn-e2e--tagged-pages tags))
+          ((equal (consult-hn-e2e--url-query url) consult-hn-e2e--other-query)
+           consult-hn-e2e--other-pages)
+          (t consult-hn-e2e--pages))))
 
 (defun consult-hn-e2e--payload (url)
   "JSON body for URL."
@@ -224,6 +246,14 @@ silently and surface only as a watchdog timeout much later."
   (when-let* ((win (active-minibuffer-window)))
     (window-buffer win)))
 
+(defun consult-hn-e2e--input ()
+  "Text the session currently holds, separator and all."
+  (when-let* ((mb (consult-hn-e2e--minibuffer)))
+    (with-current-buffer mb (minibuffer-contents-no-properties))))
+
+(defvar consult-hn-e2e--input-before nil
+  "Session text captured before a step that must not disturb it.")
+
 (defun consult-hn-e2e--candidates ()
   "Candidates the completion table currently serves."
   (when-let* ((mb (consult-hn-e2e--minibuffer)))
@@ -233,6 +263,24 @@ silently and surface only as a watchdog timeout much later."
 (defun consult-hn-e2e--candidate-count ()
   "Number of candidates the completion table currently serves."
   (length (consult-hn-e2e--candidates)))
+
+(defun consult-hn-e2e--chip-overlays (buffer)
+  "Chip overlays BUFFER carries, found the way redisplay finds them."
+  (when (buffer-live-p (get-buffer buffer))
+    (with-current-buffer buffer
+      (seq-filter (lambda (ov)
+                    (eq (overlay-get ov 'category) 'consult-hn-chips-overlay))
+                  (overlays-in (point-min) (point-max))))))
+
+(defun consult-hn-e2e--chips ()
+  "Chip text decorating the live prompt, as the display engine receives it."
+  (when-let* ((mb (consult-hn-e2e--minibuffer))
+              (ov (car (consult-hn-e2e--chip-overlays mb))))
+    (overlay-get ov 'before-string)))
+
+(defun consult-hn-e2e--stale-chips ()
+  "Chip overlays left behind in the minibuffer buffer that gets reused."
+  (length (consult-hn-e2e--chip-overlays " *Minibuf-1*")))
 
 (defun consult-hn-e2e--pages-requested ()
   "Pages asked for so far, in the order they were asked for."
@@ -265,7 +313,8 @@ control does not depend on the code under test."
   "Scrub artifacts so scenarios (and rounds) start clean."
   (setq consult-hn-e2e--requests nil
         consult-hn-e2e--delivered nil
-        consult-hn-e2e--previews nil)
+        consult-hn-e2e--previews nil
+        consult-hn--params (copy-sequence consult-hn-e2e--default-params))
   (dolist (b consult-hn-e2e--buffers)
     (when (buffer-live-p b) (kill-buffer b)))
   (setq consult-hn-e2e--buffers nil))
@@ -297,6 +346,14 @@ control does not depend on the code under test."
           (consult-hn-e2e--check
            "S1 previewing the selection went through the preview seam"
            consult-hn-e2e--previews)
+          ;; one, not two: the buffer is reused, so a session that
+          ;; inherited a previous one's decoration would show two here
+          (consult-hn-e2e--check
+           "S1 the prompt carries exactly one chip overlay"
+           (eql 1 (length (consult-hn-e2e--chip-overlays
+                           (consult-hn-e2e--minibuffer))))
+           (format "%S" (length (consult-hn-e2e--chip-overlays
+                                 (consult-hn-e2e--minibuffer)))))
           ;; the fixtures serve sixteen hits for fifteen items, so the
           ;; count above is itself the proof the repeat was dropped
           (consult-hn-e2e--check
@@ -469,6 +526,212 @@ was issued under can keep its results out of the session."
             (lambda () (zerop (minibuffer-depth)))
             (lambda (_) (funcall k))))))))))
 
+(defun consult-hn-e2e--scenario-restart (k)
+  "The restart handle re-runs the search under the parameters of the moment.
+The input is left untouched throughout, which is the whole point: the
+throttle drops input equal to the last, so a parameter change over
+unchanged text reaches the pipeline through the handle or not at all."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S7 session opens on the unparameterised results"
+   (lambda () (eql (consult-hn-e2e--candidate-count) 15))
+   (lambda (_)
+     (consult-hn-e2e--check "S7 the source hands out a restart handle"
+                            (functionp consult-hn--restart))
+     (setq consult-hn-e2e--input-before (consult-hn-e2e--input))
+     (setq consult-hn--params
+           (plist-put (copy-sequence consult-hn--params) :type 'story))
+     (funcall consult-hn--restart)
+     (consult-hn-e2e--await
+      "S7 the results come back parameterised"
+      (lambda () (seq-some (lambda (c) (string-match-p "Tagged story" c))
+                           (consult-hn-e2e--candidates)))
+      (lambda (_)
+        (consult-hn-e2e--check
+         "S7 nothing of the previous result set is mixed in"
+         (not (seq-some (lambda (c) (string-match-p "Story title" c))
+                        (consult-hn-e2e--candidates)))
+         (format "%S" (seq-take (consult-hn-e2e--candidates) 3)))
+        (consult-hn-e2e--check
+         "S7 the re-query started from page 0"
+         (equal (last (consult-hn-e2e--pages-requested) 1) '(0))
+         (format "%S" (consult-hn-e2e--pages-requested)))
+        (consult-hn-e2e--check
+         "S7 the input was never touched"
+         (equal (consult-hn-e2e--input) consult-hn-e2e--input-before)
+         (format "before=%S after=%S"
+                 consult-hn-e2e--input-before (consult-hn-e2e--input)))
+        (consult-hn-e2e--keys "C-g")
+        (consult-hn-e2e--await
+         "S7 session closes on abort"
+         (lambda () (zerop (minibuffer-depth)))
+         (lambda (_)
+           (consult-hn-e2e--check
+            "S7 the handle is taken back at teardown"
+            (null consult-hn--restart)
+            (format "%S" consult-hn--restart))
+           (funcall k))))))))
+
+(defun consult-hn-e2e--scenario-chips (k)
+  "Chips appear, follow the parameters, and leave with the session."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S8 session opens"
+   (lambda () (<= 5 (or (consult-hn-e2e--candidate-count) 0)))
+   (lambda (_)
+     (consult-hn-e2e--check
+      "S8 the prompt is decorated"
+      (consult-hn-e2e--chips)
+      "no chip overlay on the prompt")
+     (consult-hn-e2e--check
+      "S8 an untouched state shows nothing at all"
+      (equal (consult-hn-e2e--chips) "")
+      (format "%S" (consult-hn-e2e--chips)))
+     (setq consult-hn--params
+           (thread-first (copy-sequence consult-hn--params)
+                         (plist-put :type 'comment)
+                         (plist-put :points 100)))
+     (consult-hn--chips-update)
+     (consult-hn-e2e--check
+      "S8 the chips say what the parameters say"
+      (equal (consult-hn-e2e--chips) " [comment · >100p]")
+      (format "%S" (consult-hn-e2e--chips)))
+     (consult-hn-e2e--keys "C-g")
+     (consult-hn-e2e--await
+      "S8 session closes on abort"
+      (lambda () (zerop (minibuffer-depth)))
+      (lambda (_)
+        ;; C6: the buffer is reused, so an overlay that outlives its
+        ;; session is an overlay in the next, unrelated prompt
+        (consult-hn-e2e--check
+         "S8 no chips left in the minibuffer that gets reused"
+         (eql 0 (consult-hn-e2e--stale-chips))
+         (format "%S" (consult-hn-e2e--stale-chips)))
+        (funcall k))))))
+
+(defun consult-hn-e2e--scenario-parameter-key (k)
+  "A parameter command replaces the result set and says so on the prompt."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S9 session opens on the unparameterised results"
+   (lambda () (eql (consult-hn-e2e--candidate-count) 15))
+   (lambda (_)
+     (setq consult-hn-e2e--input-before (consult-hn-e2e--input))
+     ;; through the real command loop, on the key a user would press
+     (consult-hn-e2e--keys "C-c t")
+     (consult-hn-e2e--await
+      "S9 the command re-queries and the results come back parameterised"
+      (lambda () (seq-some (lambda (c) (string-match-p "Tagged story" c))
+                           (consult-hn-e2e--candidates)))
+      (lambda (_)
+        (consult-hn-e2e--check
+         "S9 nothing of the previous result set is mixed in"
+         (not (seq-some (lambda (c) (string-match-p "Story title" c))
+                        (consult-hn-e2e--candidates)))
+         (format "%S" (seq-take (consult-hn-e2e--candidates) 3)))
+        (consult-hn-e2e--check
+         "S9 the chips follow the command"
+         (equal (consult-hn-e2e--chips) " [story]")
+         (format "%S" (consult-hn-e2e--chips)))
+        (consult-hn-e2e--check
+         "S9 the session kept its input"
+         (equal (consult-hn-e2e--input) consult-hn-e2e--input-before)
+         (format "before=%S after=%S"
+                 consult-hn-e2e--input-before (consult-hn-e2e--input)))
+        ;; pressing it again moves on to the next choice, rather than
+        ;; toggling between two
+        (consult-hn-e2e--keys "C-c t")
+        (consult-hn-e2e--await
+         "S9 the same key cycles on to the next choice"
+         (lambda () (seq-some (lambda (c) (string-match-p "Tagged comment" c))
+                              (consult-hn-e2e--candidates)))
+         (lambda (_)
+           (consult-hn-e2e--check
+            "S9 the chips follow it there too"
+            (equal (consult-hn-e2e--chips) " [comment]")
+            (format "%S" (consult-hn-e2e--chips)))
+           (consult-hn-e2e--keys "C-g")
+           (consult-hn-e2e--await
+            "S9 session closes on abort"
+            (lambda () (zerop (minibuffer-depth)))
+            (lambda (_) (funcall k))))))))))
+
+(defun consult-hn-e2e--scenario-recursive-read (k)
+  "Reading an author from inside the session leaves the session standing."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S10 session opens"
+   (lambda () (eql (consult-hn-e2e--candidate-count) 15))
+   (lambda (_)
+     (setq consult-hn-e2e--input-before (consult-hn-e2e--input))
+     (consult-hn-e2e--keys "C-c a")
+     (consult-hn-e2e--await
+      "S10 the author command reads from a minibuffer of its own"
+      (lambda () (eql 2 (minibuffer-depth)))
+      (lambda (depth)
+        (when depth
+          (consult-hn-e2e--keys "p g RET"))
+        (consult-hn-e2e--await
+         "S10 the session is back to one minibuffer"
+         (lambda () (eql 1 (minibuffer-depth)))
+         (lambda (_)
+           (consult-hn-e2e--await
+            "S10 the author that was read is what came back"
+            (lambda () (seq-some (lambda (c) (string-match-p "Tagged author_pg" c))
+                                 (consult-hn-e2e--candidates)))
+            (lambda (_)
+              (consult-hn-e2e--check
+               "S10 the chips carry the author"
+               (equal (consult-hn-e2e--chips) " [pg]")
+               (format "%S" (consult-hn-e2e--chips)))
+              (consult-hn-e2e--check
+               "S10 the session came through with its input intact"
+               (equal (consult-hn-e2e--input) consult-hn-e2e--input-before)
+               (format "before=%S after=%S"
+                       consult-hn-e2e--input-before (consult-hn-e2e--input)))
+              (consult-hn-e2e--check
+               "S10 recursive minibuffers are left forbidden as they were found"
+               (null (default-value 'enable-recursive-minibuffers))
+               (format "%S" (default-value 'enable-recursive-minibuffers)))
+              (consult-hn-e2e--keys "C-g")
+              (consult-hn-e2e--await
+               "S10 session closes on abort"
+               (lambda () (zerop (minibuffer-depth)))
+               (lambda (_)
+                 (consult-hn-e2e--check
+                  "S10 no chips left in the minibuffer that gets reused"
+                  (eql 0 (consult-hn-e2e--stale-chips))
+                  (format "%S" (consult-hn-e2e--stale-chips)))
+                 (funcall k))))))))))))
+
+(defun consult-hn-e2e--scenario-from-lisp (k)
+  "A session opened with parameters from Lisp runs under them, once."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn "emacs lisp" :type 'comment :points 100)
+  (consult-hn-e2e--await
+   "S11 the session opens already parameterised"
+   (lambda () (seq-some (lambda (c) (string-match-p "Tagged comment" c))
+                        (consult-hn-e2e--candidates)))
+   (lambda (_)
+     (consult-hn-e2e--check
+      "S11 the prompt says what it was opened with"
+      (equal (consult-hn-e2e--chips) " [comment · >100p]")
+      (format "%S" (consult-hn-e2e--chips)))
+     (consult-hn-e2e--keys "C-g")
+     (consult-hn-e2e--await
+      "S11 session closes on abort"
+      (lambda () (zerop (minibuffer-depth)))
+      (lambda (_)
+        (consult-hn-e2e--check
+         "S11 the call's parameters did not outlive the call"
+         (equal consult-hn--params consult-hn-e2e--default-params)
+         (format "%S" consult-hn--params))
+        (funcall k))))))
+
 ;;; Runner
 
 (defvar consult-hn-e2e--scenarios
@@ -477,7 +740,12 @@ was issued under can keep its results out of the session."
         #'consult-hn-e2e--scenario-height
         #'consult-hn-e2e--scenario-teardown
         #'consult-hn-e2e--scenario-page-cap
-        #'consult-hn-e2e--scenario-stale-chain)
+        #'consult-hn-e2e--scenario-stale-chain
+        #'consult-hn-e2e--scenario-restart
+        #'consult-hn-e2e--scenario-chips
+        #'consult-hn-e2e--scenario-parameter-key
+        #'consult-hn-e2e--scenario-recursive-read
+        #'consult-hn-e2e--scenario-from-lisp)
   "Ordered; scenarios 2 and 3 observe the session opened by the first.")
 
 (defun consult-hn-e2e--run-scenarios (scenarios done)

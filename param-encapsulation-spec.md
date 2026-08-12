@@ -10,6 +10,8 @@ Five consequences, each verified rather than assumed:
 
 P1. Client-side narrowing is impossible. The input is already spoken for by the query and the parameter suffix, so there is nowhere to put a filter expression. Every keystroke re-queries the API and there is no way to filter what was already fetched.
 
+Corrected in Phase 2, and it changes what section 9 has left to decide. The machinery is already there and always has been: `consult--read` wraps any async table with `consult--async-wrap`, which puts `consult--async-split` in front of the pipeline, so the session opens with `#` inserted and everything after a second `#` filters the fetched candidates rather than reaching the endpoint. Measured with the stub counting requests: `#emacs lisp#yet` narrowed fifteen candidates to the one whose comment carries the word, and issued no request at all. So what P1 really describes is that the parameter suffix made the free half of the input unusable, not that consult could not filter; with parameters out of the input, narrowing works today and Phase 3 has documentation and seeding to settle rather than a mechanism to build.
+
 P2. Typing parameters fires garbage requests. `consult-hn--input->params` keeps any allowed key, so typing ` -- tags=story` sends `tags=s`, then `tags=st`, then `tags=sto`, each a syntactically valid request returning junk. Combined with unbounded pagination (below) each intermediate can spawn dozens of page fetches before cancellation.
 
 P3. Unbounded pagination. The fetch chain recurses until `page+1 = nbPages` with no cap and no delay. Measured against the live API: `query=clojure` returns `nbPages 50` at the default `hitsPerPage 20`, so one settled query costs 50 chained requests for 1000 candidates. Requesting `hitsPerPage=100` returns the same coverage in 10 requests (also measured).
@@ -46,6 +48,10 @@ C5. Reading a value from inside the session needs `enable-recursive-minibuffers`
 
 C6. Minibuffer buffers are reused, not killed (` *Minibuf-1*`). Any overlay we create must be deleted on session teardown or it leaks into the next unrelated minibuffer. Consult's own indicator both errors on double initialization and deletes on `destroy`. This class of bug cost hours in the sibling package and is not to be repeated.
 
+Measured in Phase 2 on Emacs 31.0.91, and the second half of that is milder than it reads. Taking the teardown out does leave a chip overlay sitting in ` *Minibuf-1*` after the session, which the leak assertion catches. Taking out the install-time cleanup as well does not make it show up in the next prompt, and the count stays at one however many sessions run: entering a minibuffer clears the overlays left in it. So the hazard here is stale state after exit rather than a visible decoration in somebody else's prompt, and the assertion is written against what is actually observable.
+
+C7. The pipeline handed to `consult--read` is not the whole pipeline. `consult--async-wrap` puts `consult--async-split` in front of it and `consult--async-indicator` plus `consult--async-refresh` behind it. Two consequences, both load-bearing: a stage that swallows an action instead of passing it on breaks the stages it hides, which is how `destroy` was leaving consult's own indicator overlay behind until Phase 2; and the split stage is what makes section 9 a question about defaults rather than about mechanism.
+
 ## 4. Design decisions
 
 D1. Parameters leave the input line entirely. The input carries the query and, optionally, a narrowing expression. Rationale: it is the precondition for P1, and it removes P2 by construction, since a parameter can only change through a command that validates it.
@@ -55,6 +61,8 @@ D2. One state object is the single source of truth. A plist held in `consult-hn-
 D3. The session owns the keyboard; the parameter surface is a prompt indicator plus session bindings. Forced by T1. Rejected: keeping the transient live during the session, which is impossible; and driving parameters through consult narrowing, which C3 rules out.
 
 D4. Parameter commands live in a package-owned keymap passed as `:keymap` to `consult--read`, under a prefix so `which-key` documents them for free. Not narrowing keys, since those are unbound for most users (C3). Each command mutates the state and calls the session restart handle.
+
+The prefix is `C-c`, and the keys are `t` type, `a` author, `p` points, `c` comments, `r` range, `f` front page, `u` url matching, `s` sort. `C-c` is unbound in `minibuffer-local-map`, and the composed keymap `consult--read` builds merges prefixes rather than replacing them, so a user who already has minibuffer bindings under `C-c` keeps them; checked against a real configuration where `C-c '` and `C-c C-s` are taken, and both still resolved inside a session. Three of the commands cycle, two toggle, three read a value.
 
 D5. The source exposes a restart handle stored in a session variable while the session is alive. Forced by C1 and C2. The handle performs the full restart sequence in section 8. Rejected: re-sending input to the pipeline head, which the throttle discards.
 
@@ -84,13 +92,15 @@ D12. The `--` syntax keeps being parsed when present, is removed from the docume
 | range | `24h`, `week`, `month`, `year`, `all` | `numericFilters=created_at_i>T` | `all` | `24h`, `7d`, `30d`, `1y` |
 | front-page | boolean | `tags=front_page` | nil | `front` |
 | url-match | boolean | `restrictSearchableAttributes=url` | nil | `url` |
-| sort | nil, `date`, `relevance` | endpoint `search_by_date` or `search` | nil, meaning infer | `rel` when relevance |
+| sort | nil, `date`, `relevance` | endpoint `search_by_date` or `search` | nil, meaning infer | `rel` when relevance, `date` when dated |
 
 Two notes on fidelity to the current behaviour. Sort is currently inferred from the presence of `front_page` in tags, which conflates two independent things; it becomes an explicit parameter whose default reproduces today's behaviour. Multiple `numericFilters` are joined with a comma, as the transient already does.
 
 Settled while building Phase 1, since the two above are in tension. `:sort` nil means infer, and the inference reads the tags actually going out rather than the state, so the legacy `tags=front_page` reaches the relevance endpoint exactly as it does today. `date` and `relevance` are explicit and override the inference. Rendering order is the order of this table: tags are joined `type,author,front_page` and numeric conditions `points,num_comments,created_at_i`. The endpoint treats both as unordered sets, so the order is for legibility and for specs that can compare whole strings.
 
 `hitsPerPage` and `page` are internal and never user-facing parameters, though `hitsPerPage` gets a defcustom for people on slow links.
+
+Chip vocabulary settled while building Phase 2, which is Q2 answered. The table's column is the vocabulary, `date` joins `rel` for an explicitly dated sort, the separator is a middle dot with spaces, and the whole thing is wrapped as ` [a · b · c]` and given the `consult-narrow-indicator` face, since it is the same class of prompt decoration in the same position. A state that constrains nothing renders the empty string, so nothing about the prompt changes for someone who never touches a parameter. `consult-hn--params-chips` is the only place that knows any of this.
 
 Parameters are layered, and the ladder is: the legacy ` -- key=value` suffix beats the state object, which beats `consult-hn-default-search-params`, which beats the page size this package would otherwise ask for. The first rung is what keeps a hand-written keybinding authoritative; the last is what keeps `hitsPerPage` in someone's `consult-hn-default-search-params` working.
 
@@ -132,6 +142,8 @@ Option B, status quo preserved: plain typing remains the server query, and a sep
 
 Recommendation: Option A, for symmetry and because P1 is the complaint that started this. Not implemented until confirmed.
 
+What Phase 2 measured changes the shape of the decision, though not the recommendation. Option A is very nearly what already happens: `consult--async-wrap` installs the split stage for every async table, so the session opens with `#` sitting in the input, everything up to a second `#` is the server query, and everything after it filters the fetched candidates without touching the network. That was verified with the stub counting requests, narrowing fifteen candidates to one on a word that only appears in a comment, at a cost of zero requests. So Phase 3 is not building a split; it is deciding whether to keep consult's default seeding, saying so in the readme, and pinning the behaviour with the e2e scenario that freezes the request counter across typing. Option B, by contrast, now means deliberately turning off machinery that is already on.
+
 ## 10. Backwards compatibility
 
 Retained: the ` -- key=value` input syntax is still parsed when present, undocumented and unwarned (D12). `consult-hn-default-search-params` continues to work, merged under the state object.
@@ -154,6 +166,10 @@ As built in Phase 1, where the inventory above turned out to want more seams. Ne
 
 `consult-hn--input->params` came out of Phase 1 with its behaviour pinned by its specs and no caller left inside the package: the fetch path takes the legacy suffix through `consult-hn--legacy-pairs` instead, because the whole-input version merges `consult-hn-default-search-params` in a way that would let a default outrank the state. It is the compatibility surface and nothing else. Phase 2 removes the last producer of the string, which is the moment to decide whether the parser goes too.
 
+As built in Phase 2, steps 2.1 to 2.5. New: `consult-hn--restart`, a variable holding the live session's way back into the pipeline, set on the source's `setup` and cleared on its `destroy`; `consult-hn--params-chips`; `consult-hn--chips-install`, `--chips-update`, `--chips-remove` and `consult-hn--chips-overlay`; `consult-hn--session-setup`, which is the one minibuffer setup hook and does the height scaling and the chips; `consult-hn--param-set`, `consult-hn--cycle`, `consult-hn--read`, `consult-hn--read-threshold`; `consult-hn-session-map` and the eight commands `consult-hn-session-type`, `-author`, `-points`, `-comments`, `-range`, `-front-page`, `-url-match`, `-sort`; `consult-hn--params-merge` and `consult-hn--param-keys` for the keyword arguments; and `consult-hn--params-searchable-p`, which is what lets an author or a front page carry a search with no query at all, since without it a parameter set in an empty session would silently fetch nothing. Changed: `consult-hn--async-source` remembers its input, exposes the restart, and passes `setup` and `destroy` on to the stages downstream instead of swallowing `destroy`; `consult-hn` takes `(&optional query &rest params)` and holds the merged state for the call only. Step 2.6 and the fate of `consult-hn--input->params` are untouched, both waiting on Q4.
+
+Not in the inventory and worth saying plainly: no reset command. Cycling reaches the default, an empty answer clears an author or a threshold, and the chips say what is set, so a separate reset would be a fourth way to do what three already do.
+
 ## 13. Testing
 
 Unit, extending the existing 33 specs: parameter rendering for every row of section 5 including combinations; chips string for empty, single and full states; the compatibility adapter for the legacy string; generation guard drops stale pages; dedup drops repeats; page cap honoured; annotation cap and ellipsis; `vertico-count` scaling including the already-buffer-local case; restart handle sequence.
@@ -163,6 +179,8 @@ End to end, following the harness that proved itself in the sibling package: a r
 One thing the harness had to grow for D8, worth knowing before writing the Phase 2 scenarios. Killing the request buffer is a complete defence inside the stub, because delivery is a timer that checks `buffer-live-p` and Emacs runs it to completion between commands: a mid-stream re-query alone therefore proves nothing about the generation guard. What killing cannot reach is a response arriving in a buffer the caller never received, which is what a redirect does, and the stub now models exactly that under `consult-hn-e2e--detached-page`. The scenario carries its own control, asserting the retired response was in fact delivered, and it fails with the guard removed.
 
 The existing `make test` target is broken in a way worth fixing while here: it calls plain `package-initialize` against the user's package directory, so it fails locally with `void-function buttercup-run-discover` and only works on CI.
+
+As built through Phase 2: eleven scenarios, sixty-six checks a round. Streaming with dedup and cap, the annotation cap, the height budget, teardown, the page cap, the stale chain, the restart handle, the chips lifecycle, a parameter command through the real command loop, the recursive read for an author, and a session opened with keyword arguments from Lisp. Still owed, and owed to Phase 3: narrowing sending no requests, which the throwaway probe measured but the suite does not yet hold.
 
 ## 14. Risks
 
@@ -182,7 +200,7 @@ Phase 0, defects and height. Obsolete symbols that break `make check-compile` on
 
 Phase 1, engine. Parameter state object and rendering, page cap and `hitsPerPage` (D7), generation guard (D8), dedup (D9), compatibility adapter (D12). No visible UI change beyond fewer requests and no stale results. Acceptance: unit specs for every mapping and guard, live session verified to issue the expected request count for a known broad query. Done: 91 unit specs, 30 e2e checks over six scenarios run twice, and a live run of `query=clojure` costing 10 requests for 1000 distinct items where the same coverage used to cost 50. `consult-hn-max-pages` defaults to 10, which is what the endpoint offers at 100 hits a page, so the default cap changes no result set and only the pathological cases feel it.
 
-Phase 2, session UI. Keymap and parameter commands, chips overlay, restart handle wiring, transient rewritten onto the state object. Acceptance: e2e scenarios for parameter re-query, chips lifecycle, recursive read, plus the leak assertion.
+Phase 2, session UI. Keymap and parameter commands, chips overlay, restart handle wiring, transient rewritten onto the state object. Acceptance: e2e scenarios for parameter re-query, chips lifecycle, recursive read, plus the leak assertion. Steps 2.1 to 2.5 done: 120 unit specs and 66 e2e checks over eleven scenarios, run twice, plus a live run against the real endpoint in a real interactive Emacs where `C-c a` read an author, the results came back authored by them alone, the chips said so, and the session closed leaving nothing behind. Three defences were shown to discriminate by removing them and watching the suite go red: the chips teardown, the local binding of `enable-recursive-minibuffers`, and, before it was fixed, the swallowed `destroy`. Step 2.6, the transient, is all that is left of the phase and is still blocked on Q4.
 
 Phase 3, input semantics and documentation. The section 9 decision, split style if Option A, readme and changelog, e2e for narrowing sending no requests.
 

@@ -2,7 +2,9 @@
 
 Companion to `param-encapsulation-spec.md`. The spec says what and why; this says how, with the environment facts and acceptance gates. Branch `param-encapsulation`. Both documents are temporary and get removed before merge.
 
-Phases 0 and 1 are done and committed. Phases 2 and 3 remain.
+Phases 0 and 1 are done and committed. Phase 2 is done up to and including step 2.5, uncommitted at the time of writing. Step 2.6 and Phase 3 remain.
+
+State of play: work happens at the tip of `param-encapsulation`, which is ahead of `main` and has never been pushed; Phase 1 landed in `d8028fc` and Phase 0 in `23f5a27` and `c9558fc`, so `git log 23f5a27~1..` is the whole story. Confirm all three gates below on arrival before building anything on top of them, and if one is red, say so instead of working around it.
 
 ## 0. Environment, read this before running anything
 
@@ -49,6 +51,10 @@ Live verification in the user's running Emacs, through the `elisp-eval` MCP, is 
 
 Adding a scenario: write `consult-hn-e2e--scenario-NAME (k)`, ending in `(funcall k)`, and add it to `consult-hn-e2e--scenarios`. Scenarios run in order and the middle ones observe the session the first one opened. A scenario added after the teardown one opens and closes its own session, as the cap and stale-chain scenarios do.
 
+Phase 2 grew it again, in three places worth knowing before adding a twelfth scenario. `consult-hn-e2e--tagged-pages` serves a page whose titles are the tags the request carried, so a parameterised search is visible in the display and the display says which parameter it came back for; anything asserting that a parameter reached the endpoint and came back should use it rather than counting requests. `consult-hn-e2e--reset` now also restores `consult-hn--params` from `consult-hn-e2e--default-params`, because the state outlives a session by design and without that the scenarios, and then the second round, would inherit each other's parameters. And the probes `consult-hn-e2e--chips` and `--stale-chips` read the chip overlay out of the buffer by its category rather than out of the package's variable, so they observe what redisplay is handed, and the second one reads ` *Minibuf-1*` after the session is over.
+
+There is also a live harness that is not in the repo, left at `/tmp/consult-hn-live/`. It boots the same sandbox and reuses the e2e plumbing but installs no stub, so every request goes to hn.algolia.com, and it drives the session with real keys. That is what verified Phase 2 against reality, and it is cheaper to rebuild than to explain: boot file, a scenario, `consult-hn-e2e--run-scenarios` with `consult-hn-e2e--finish`, and `consult-hn-e2e-results-file` pointed somewhere outside the repo. The same directory holds the throwaway probe that measured client-side narrowing for Phase 3.
+
 Phase 1 grew the harness in three places. The fixtures now serve sixteen hits for fifteen items, since hit 3 sits on two pages, which is what makes every candidate count in the suite a dedup assertion as well. The stub serves a second fixture set, titled `Other story`, for `query=rust`, so a re-query is visible in the display rather than merely counted. And `consult-hn-e2e--detached-page` makes a page answer from a buffer the caller never received, modelling a redirect; it is the only shape of response that cancelling cannot reach, and therefore the only way the generation guard can be observed from the outside. Anything asserting cancellation should use it, and should carry a control proving the response was delivered at all, or the assertion passes for the wrong reason.
 
 ## 2. Phase 1, the parameter engine
@@ -78,15 +84,47 @@ Done. Compile gate clean, 91 specs, 30 e2e checks per round green twice. Live, a
 
 ## 3. Phase 2, session UI and the transient
 
-Depends on Q4. Steps: the session keymap with one command per parameter under a prefix; the chips overlay via `before-string` at `(1- (minibuffer-prompt-end))`, installed from `minibuffer-with-setup-hook`, updated on change, deleted on teardown; the restart handle registered by the source while the session lives; the transient rewritten to read and write the state object, with `consult-hn-transient--format-query` deleted.
+Only step 2.6 depends on Q4; 2.1 to 2.5 can proceed without it. Natural split if this wants two sessions: 2.1 to 2.4 is the session UI, 2.5 and 2.6 are the programmatic surface and the transient.
 
 Non-obvious constraints, all verified, all in spec section 3: the throttle discards input equal to the previous input, so a parameter change cannot be propagated by faking input; consult narrowing is single-axis and unbound by default, so it cannot carry the parameter set; a transient cannot stay interactive over a live minibuffer; minibuffer buffers are reused, so a leaked overlay shows up in the next unrelated minibuffer.
 
-Gates: e2e scenarios for a parameter command replacing results, chips appearing and being gone after exit, a recursive read for author not corrupting the session, and no overlay of our category left on ` *Minibuf-1*`.
+Step 2.1, the restart handle. The source registers a handle in a session variable while the session lives and clears it on teardown. Forced by C1 and C2: input reaches the pipeline only through an after-change hook, and the throttle drops input equal to the previous input, so a parameter change with unchanged text has no way in. The handle performs the whole sequence in spec section 8, of which the source already does most: Phase 1's `cancel` bumps the generation, clears the dedup set and kills the request buffers, so what is new is exposing it and re-fetching page 0 from the current state.
+
+Gate: a unit spec driving the handle and asserting the sequence, generation bumped, dedup cleared, flush sent downstream, page 0 requested carrying the new parameters; an e2e scenario calling the handle mid-session and asserting the result set is replaced rather than mixed.
+
+Step 2.2, the chips string. `consult-hn--params-chips`, state to string, pure and no overlay. Vocabulary and separator are Q2; pick one, put it in spec section 5's chip column, and keep the function the only place that knows it.
+
+Gate: unit specs for the empty state, a single parameter and a full house, plus one asserting the default state renders nothing at all, since an empty chip string is what keeps the prompt unchanged for someone who never touches a parameter.
+
+Step 2.3, the chips overlay. `before-string` at `(1- (minibuffer-prompt-end))`, installed from `minibuffer-with-setup-hook`, updated on every parameter change, deleted on teardown. C4 says the technique is proven, it is how `consult-narrow` renders its label, and C6 says the deletion is not optional: minibuffer buffers are reused, so a leaked overlay turns up in the next unrelated minibuffer.
+
+Gate: an e2e scenario asserting the chips appear with the expected text, change after a parameter command, and are gone after exit; plus the leak assertion that ` *Minibuf-1*` carries no overlay of our category once the session is over. Show the leak assertion discriminates by skipping the teardown and watching the following scenario's minibuffer carry the chips.
+
+Step 2.4, the keymap and the parameter commands. `consult-hn-session-map` passed as `:keymap` to `consult--read`, one command per parameter under a prefix so which-key documents them for free. Not narrowing keys, which C3 rules out. Each command validates, mutates `consult-hn--params`, updates the chips and calls the restart handle. The author command reads a value from inside the session, which needs `enable-recursive-minibuffers` non-nil around the read, bound locally as consult does it, never globally (C5).
+
+Gate: e2e scenarios for a parameter command replacing the results, and for the recursive read, asserting the depth returns to one, the session survives it, and both the candidates and the chips reflect the author that was read.
+
+Step 2.5, the programmatic surface. `(consult-hn &optional query &rest params)` with keywords matching spec section 5, merged over the persisted plist for that call only. This is what replaces the string for programmatic callers once the transient stops producing one.
+
+Gate: unit specs that a keyword argument reaches the request URL, that it does not persist into `consult-hn--params` past the call, and that the interactive path still passes none.
+
+Done, 2.1 to 2.5. Compile gate clean, 120 unit specs, 66 e2e checks over eleven scenarios green twice in a row. What each step actually cost, in case it is useful for estimating 2.6: the restart handle was mostly exposing what `cancel` already did, plus remembering the input, plus one real defect it uncovered, which is that the source swallowed `destroy` and so the stages downstream of it never tore down, leaving consult's own indicator overlay in the reused minibuffer; the chips were a `before-string` overlay at the position `consult-narrow` uses, installed from the setup hook and removed from a buffer-local `minibuffer-exit-hook`; the commands are three cyclers, two togglers and three readers over one `consult-hn--param-set`; and the keyword arguments are one merge function and a `let`.
+
+One thing 2.4 needed that the plan did not anticipate. With parameters out of the input, an author or a front page is a search with no query at all, and the old two-character minimum meant setting a parameter in an empty session fetched nothing at all and looked broken. `consult-hn--params-searchable-p` is the answer: tags or numeric filters carry a search on their own, while url matching and sort only say how a query should be treated. A session inheriting a parameter from the last one therefore fetches on open, which is what makes the front page a one-key affair.
+
+Three defences were shown to discriminate rather than merely pass. Removing the chips teardown turns the leak assertion red. Removing the local binding of `enable-recursive-minibuffers` makes the author command never open its read at all, and the whole recursive-read scenario times out. And the swallowed `destroy` was caught by probing the reused minibuffer for overlays before the fix went in. The C6 story turned out to be milder than the spec claimed on Emacs 31.0.91, and the spec now says so: a leaked overlay is stale state after exit, not a decoration in somebody else's prompt, because entering a minibuffer clears the overlays left in it.
+
+Live, in a real interactive Emacs against the real endpoint: a session opened on `clojure`, `C-c a` opened a read at minibuffer depth two, `pg` came back at depth one, every candidate on offer was authored by pg, the chips read ` [pg]`, the request carried `author_pg`, the result set was replaced rather than added to, and the session closed leaving no overlay and no handle. Separately, in the user's own running Emacs with their own configuration, the composed keymap resolved our `C-c t` and `C-c a` while their existing `C-c '` and `C-c C-s` still worked, and a scripted session showed a hundred candidates, empty chips, then ` [story]` after the type command, then a clean teardown.
+
+Step 2.6, the transient onto the state object. Blocked on Q4. Infixes read their initial values from the plist and write back on set, `consult-hn-transient-action` only opens the session, and `consult-hn-transient--format-query` is deleted. R1 is that this is the largest single piece with no harness today, so the state-to-arguments and arguments-to-state functions are pure and tested directly while the transient itself stays thin.
+
+Gate: unit specs both directions, state to infix values and infix values back to state, including the round trip. This is also the moment `consult-hn--input->params` loses its last reason to exist, since nothing produces the string any more; decide there whether the parser and its specs go with it.
 
 ## 4. Phase 3, input semantics and docs
 
 Depends on Q1. Implement the chosen semantics, fix `make test`, update the readme, and add an e2e scenario proving narrowing sends no requests by freezing the request counter across typing.
+
+Smaller than it looks, and Q1 is now a question about defaults rather than about mechanism. Measured in Phase 2 with a throwaway probe under the stub: `consult--read` wraps every async table with `consult--async-split`, so the session already opens with `#` in the input, the query is what sits between the first and second `#`, and what follows the second one narrowed fifteen candidates to one without issuing a single request. Option A is therefore close to a documentation change plus the scenario that pins it; Option B means switching off machinery that is on by default. The probe is at `/tmp/consult-hn-live/split-check.el` and wants twenty lines to become a scenario, with the caveat that cost the first attempt a false negative: pick a filter term that genuinely appears in one fixture, since the timestamps make digits match everything.
 
 ## 5. Ground rules
 

@@ -206,6 +206,56 @@
                                          '((tags "story,front_page")))
             :to-equal "search")))
 
+(describe "consult-hn--params-chips"
+  (it "renders nothing at all for an untouched state"
+    ;; what keeps the prompt unchanged for someone who never touches a
+    ;; parameter, and what tells the overlay there is nothing to show
+    (expect (consult-hn--params-chips (consult-hn-tests--params)) :to-equal "")
+    (expect (consult-hn--params-chips (consult-hn-tests--params :query "emacs"))
+            :to-equal "")
+    (expect (consult-hn--params-chips (consult-hn-tests--params :author "  "))
+            :to-equal ""))
+
+  (it "renders one chip per set parameter"
+    (dolist (row '((:type story "story")
+                   (:type comment "comment")
+                   (:author "pg" "pg")
+                   (:points 100 ">100p")
+                   (:comments 25 ">25c")
+                   (:range 24h "24h")
+                   (:range week "7d")
+                   (:range month "30d")
+                   (:range year "1y")
+                   (:front-page t "front")
+                   (:url-match t "url")
+                   (:sort relevance "rel")
+                   (:sort date "date")))
+      (expect (consult-hn--params-chips
+               (apply #'consult-hn-tests--params (butlast row)))
+              :to-equal (format " [%s]" (car (last row))))))
+
+  (it "says nothing about what is left at its default"
+    (expect (consult-hn--params-chips (consult-hn-tests--params :type 'all))
+            :to-equal "")
+    (expect (consult-hn--params-chips (consult-hn-tests--params :range 'all))
+            :to-equal "")
+    (expect (consult-hn--params-chips (consult-hn-tests--params :sort nil))
+            :to-equal ""))
+
+  (it "renders a full house in the order of the parameter model"
+    (expect (consult-hn--params-chips
+             (consult-hn-tests--params
+              :query "emacs lisp" :type 'story :author "pg" :points 100
+              :comments 25 :range 'week :front-page t :url-match t
+              :sort 'relevance))
+            :to-equal " [story · pg · >100p · >25c · 7d · front · url · rel]"))
+
+  (it "carries a face, so the chips read as prompt decoration"
+    (expect (get-text-property
+             1 'face (consult-hn--params-chips
+                      (consult-hn-tests--params :type 'story)))
+            :to-be 'consult-narrow-indicator)))
+
 (describe "consult-hn--api-url"
   (it "encodes a multi-word query exactly once"
     ;; a two-word query used to go out as query=a%2520b and match nothing
@@ -453,7 +503,248 @@
       (funcall source "emacs")
       (expect (buffer-live-p buffer) :to-be t)
       (funcall source 'destroy)
-      (expect (buffer-live-p buffer) :to-be nil))))
+      (expect (buffer-live-p buffer) :to-be nil)))
+
+  (it "passes the lifecycle on to the stages downstream"
+    ;; consult's own indicator deletes its prompt overlay on destroy and
+    ;; the refresh stage cancels its timer; swallowing the action leaves
+    ;; both behind in a minibuffer that gets reused
+    (spy-on 'url-retrieve :and-return-value nil)
+    (let* ((seen nil)
+           (source (consult-hn--async-source (lambda (a) (push a seen)))))
+      (funcall source 'setup)
+      (funcall source 'destroy)
+      (expect (reverse seen) :to-equal '(setup destroy)))))
+
+(describe "consult-hn--restart"
+  (defvar consult-hn-tests--urls)
+  (before-each
+    (setq consult-hn--restart nil
+          consult-hn--seen (make-hash-table :test 'equal)
+          consult-hn-tests--urls nil)
+    (spy-on 'url-retrieve :and-call-fake
+            (lambda (url &rest _) (push url consult-hn-tests--urls) nil)))
+  (after-each
+    (setq consult-hn--restart nil))
+
+  (it "is handed out while the session lives and taken back at teardown"
+    (let ((source (consult-hn--async-source #'ignore)))
+      (expect consult-hn--restart :to-be nil)
+      (funcall source 'setup)
+      (expect (functionp consult-hn--restart) :to-be t)
+      (funcall source 'destroy)
+      (expect consult-hn--restart :to-be nil)))
+
+  (it "runs the current input again under the parameters of the moment"
+    (let* ((consult-hn--generation 0)
+           (consult-hn--params (consult-hn-tests--params))
+           (downstream nil)
+           (source (consult-hn--async-source (lambda (a) (push a downstream)))))
+      (funcall source 'setup)
+      (funcall source "emacs")
+      (setq consult-hn-tests--urls nil downstream nil)
+      (puthash "1" t consult-hn--seen)
+      ;; the input does not change, which is precisely what the throttle
+      ;; refuses to carry; only the handle gets this into the pipeline
+      (setq consult-hn--params (consult-hn-tests--params :type 'story))
+      (let ((generation consult-hn--generation))
+        (funcall consult-hn--restart)
+        (expect consult-hn--generation :not :to-equal generation))
+      (expect (hash-table-count consult-hn--seen) :to-equal 0)
+      (expect downstream :to-equal '(flush))
+      (expect (length consult-hn-tests--urls) :to-equal 1)
+      (expect (car consult-hn-tests--urls) :to-match "query=emacs")
+      (expect (car consult-hn-tests--urls) :to-match "tags=story")
+      (expect (car consult-hn-tests--urls) :to-match "page=0")))
+
+  (it "retires the pages of the search it replaces"
+    (let* ((consult-hn--generation 0)
+           (buffer (generate-new-buffer " *consult-hn-test-request*"))
+           (source (consult-hn--async-source #'ignore)))
+      (spy-on 'url-retrieve :and-return-value buffer)
+      (funcall source 'setup)
+      (funcall source "emacs")
+      (funcall consult-hn--restart)
+      (expect (buffer-live-p buffer) :to-be nil)))
+
+  (it "asks for nothing when the session has no input worth searching"
+    (let ((source (consult-hn--async-source #'ignore)))
+      (funcall source 'setup)
+      (funcall consult-hn--restart)
+      (expect consult-hn-tests--urls :to-be nil)))
+
+  (it "searches on the parameters alone before any input has arrived"
+    ;; a parameter command can land between the session opening and the
+    ;; first input reaching the source, and an author is a search anyway
+    (let ((consult-hn--params (consult-hn-tests--params :author "pg"))
+          (source (consult-hn--async-source #'ignore)))
+      (funcall source 'setup)
+      (funcall consult-hn--restart)
+      (expect (length consult-hn-tests--urls) :to-equal 1)
+      (expect (car consult-hn-tests--urls) :to-match "author_pg"))))
+
+(describe "consult-hn--cycle"
+  (it "walks the choices and wraps around at the end"
+    (expect (consult-hn--cycle 'all '(all story comment)) :to-equal 'story)
+    (expect (consult-hn--cycle 'comment '(all story comment)) :to-equal 'all)
+    (expect (consult-hn--cycle nil '(nil date relevance)) :to-equal 'date)
+    (expect (consult-hn--cycle 'relevance '(nil date relevance)) :to-be nil))
+
+  (it "starts from the beginning for a value that is not a choice"
+    (expect (consult-hn--cycle 'nonsense '(all story comment)) :to-equal 'all)))
+
+(describe "consult-hn session commands"
+  (defvar consult-hn-tests--restarts)
+  (defvar consult-hn-tests--saved-params)
+  (before-each
+    (setq consult-hn-tests--restarts 0
+          consult-hn-tests--saved-params consult-hn--params
+          consult-hn--params (consult-hn-tests--params)
+          consult-hn--restart (lambda () (setq consult-hn-tests--restarts
+                                               (1+ consult-hn-tests--restarts))))
+    (spy-on 'minibufferp :and-return-value t))
+  (after-each
+    (setq consult-hn--params consult-hn-tests--saved-params
+          consult-hn--restart nil))
+
+  (it "refuse to run outside a session"
+    (spy-on 'minibufferp :and-return-value nil)
+    (expect (consult-hn-session-type) :to-throw 'user-error))
+
+  (it "cycle a parameter and search again on the spot"
+    (consult-hn-session-type)
+    (expect (plist-get consult-hn--params :type) :to-equal 'story)
+    (expect consult-hn-tests--restarts :to-equal 1)
+    (consult-hn-session-type)
+    (expect (plist-get consult-hn--params :type) :to-equal 'comment)
+    (expect consult-hn-tests--restarts :to-equal 2))
+
+  (it "toggle a flag"
+    (consult-hn-session-front-page)
+    (expect (plist-get consult-hn--params :front-page) :to-be t)
+    (consult-hn-session-front-page)
+    (expect (plist-get consult-hn--params :front-page) :to-be nil)
+    (consult-hn-session-url-match)
+    (expect (plist-get consult-hn--params :url-match) :to-be t))
+
+  (it "cycle the range and the sort through their own choices"
+    (consult-hn-session-range)
+    (expect (plist-get consult-hn--params :range) :to-equal '24h)
+    (consult-hn-session-sort)
+    (expect (plist-get consult-hn--params :sort) :to-equal 'date))
+
+  (it "read an author, and release it again when told nothing"
+    (spy-on 'consult-hn--read :and-return-value "pg")
+    (consult-hn-session-author)
+    (expect (plist-get consult-hn--params :author) :to-equal "pg")
+    (spy-on 'consult-hn--read :and-return-value "")
+    (consult-hn-session-author)
+    (expect (plist-get consult-hn--params :author) :to-be nil))
+
+  (it "read a threshold, and clear it when told nothing"
+    (spy-on 'consult-hn--read :and-return-value "100")
+    (consult-hn-session-points)
+    (expect (plist-get consult-hn--params :points) :to-equal 100)
+    (spy-on 'consult-hn--read :and-return-value "")
+    (consult-hn-session-points)
+    (expect (plist-get consult-hn--params :points) :to-be nil)
+    (spy-on 'consult-hn--read :and-return-value "25")
+    (consult-hn-session-comments)
+    (expect (plist-get consult-hn--params :comments) :to-equal 25))
+
+  (it "refuse a threshold that is not a number, leaving the search alone"
+    (spy-on 'consult-hn--read :and-return-value "a lot")
+    (expect (consult-hn-session-points) :to-throw 'user-error)
+    (expect (plist-get consult-hn--params :points) :to-be nil)
+    (expect consult-hn-tests--restarts :to-equal 0))
+
+  (it "reach the request through the parameter state"
+    (spy-on 'url-retrieve :and-return-value nil)
+    (consult-hn-session-type)
+    (expect (consult-hn--request-url "emacs" 0) :to-match "tags=story"))
+
+  (it "are all reachable from the session keymap"
+    (dolist (command '(consult-hn-session-type consult-hn-session-author
+                       consult-hn-session-points consult-hn-session-comments
+                       consult-hn-session-range consult-hn-session-front-page
+                       consult-hn-session-url-match consult-hn-session-sort))
+      (expect (where-is-internal command consult-hn-session-map)
+              :not :to-be nil))))
+
+(describe "consult-hn, called from Lisp"
+  (defvar consult-hn-tests--read-args)
+  (before-each
+    (setq consult-hn-tests--read-args nil)
+    (spy-on 'consult--read :and-call-fake
+            (lambda (&rest args)
+              ;; the session as it would be, observed from inside it:
+              ;; the options it opens with, the state it runs under, and
+              ;; the request it would issue for the input it was seeded
+              ;; with (or for typed input, when it was seeded with none)
+              (let* ((options (cdr args))
+                     (initial (plist-get options :initial))
+                     (input (if (string-blank-p initial) "emacs" initial)))
+                (setq consult-hn-tests--read-args
+                      (list :options options
+                            :url (consult-hn--request-url input 0)
+                            :params (copy-sequence consult-hn--params))))
+              nil)))
+
+  (it "sends a keyword parameter to the endpoint"
+    (consult-hn "emacs" :type 'story :points 100 :author "pg")
+    (let ((url (plist-get consult-hn-tests--read-args :url)))
+      (expect url :to-match "tags=story,author_pg")
+      (expect url :to-match "points")))
+
+  (it "keeps the call's parameters out of the state that persists"
+    (let ((before (copy-sequence consult-hn--params)))
+      (consult-hn "emacs" :type 'story)
+      (expect (plist-get consult-hn-tests--read-args :params)
+              :not :to-equal before)
+      (expect consult-hn--params :to-equal before)))
+
+  (it "refuses a parameter the model does not have"
+    (expect (consult-hn "emacs" :zop 1) :to-throw 'user-error))
+
+  (it "starts the session on the query it was given"
+    (consult-hn "emacs lisp")
+    (expect (plist-get (plist-get consult-hn-tests--read-args :options) :initial)
+            :to-equal "emacs lisp")
+    ;; the legacy suffix is still a caller's to spell out
+    (consult-hn "emacs -- tags=front_page")
+    (expect (plist-get consult-hn-tests--read-args :url)
+            :to-match "/api/v1/search\\?"))
+
+  (it "passes none of it when called interactively"
+    (let ((before (copy-sequence consult-hn--params)))
+      (call-interactively #'consult-hn)
+      (expect (plist-get (plist-get consult-hn-tests--read-args :options) :initial)
+              :to-equal consult-hn-initial-input-string)
+      (expect (plist-get consult-hn-tests--read-args :params) :to-equal before)))
+
+  (it "hands the session its parameter keymap"
+    (consult-hn "emacs")
+    (expect (plist-get (plist-get consult-hn-tests--read-args :options) :keymap)
+            :to-be consult-hn-session-map)))
+
+(describe "consult-hn--params-searchable-p"
+  (it "says a query is needed when nothing else narrows the search"
+    (expect (consult-hn--params-searchable-p (consult-hn-tests--params))
+            :to-be nil)
+    ;; where the query matches is not a search on its own
+    (expect (consult-hn--params-searchable-p
+             (consult-hn-tests--params :url-match t))
+            :to-be nil)
+    (expect (consult-hn--params-searchable-p
+             (consult-hn-tests--params :sort 'relevance))
+            :to-be nil))
+
+  (it "says a parameter can carry the search by itself"
+    (dolist (params '((:author "pg") (:type story) (:front-page t)
+                      (:points 100) (:comments 25) (:range 24h)))
+      (expect (consult-hn--params-searchable-p
+               (apply #'consult-hn-tests--params params))
+              :to-be t))))
 
 (describe "consult-hn--time-ago"
   ;; the float-time spy works this way: you add some time to a given

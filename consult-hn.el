@@ -118,6 +118,13 @@ response that outlives its request can tell that nobody wants it.")
 (defvar consult-hn--seen (make-hash-table :test 'equal)
   "Item ids already delivered for the current search.")
 
+(defvar consult-hn--restart nil
+  "Runs the live session's search again, nil when no session is open.
+Input reaches the pipeline only when the minibuffer text changes, and
+the throttle drops input equal to the one before it, so a parameter
+change over unchanged text has no way in.  The source therefore hands
+out its own way back in, which is what the parameter commands call.")
+
 (defconst consult-hn--range-seconds
   '((24h . 86400) (week . 604800) (month . 2592000) (year . 31536000))
   "How far back each `:range' value reaches, in seconds.")
@@ -155,6 +162,14 @@ The endpoint takes several conditions in one comma-separated value."
                              (format "created_at_i>%d"
                                      (- (time-convert nil 'integer) secs)))))))
     (string-join filters ",")))
+
+(defun consult-hn--params-searchable-p (params)
+  "Whether PARAMS ask the endpoint for something without any query at all.
+An author, a kind of item or a threshold is a search in itself; saying
+where the query should match is not."
+  (and (or (consult-hn--params-tags params)
+           (consult-hn--params-numeric-filters params))
+       t))
 
 (defun consult-hn--params-render (params &optional page)
   "API parameter alist for PARAMS, asking for PAGE when given.
@@ -200,6 +215,36 @@ where asking for the front page means asking for its ranking."
                 ""))
            "search"
          "search_by_date"))))
+
+(defun consult-hn--params-chips (params)
+  "PARAMS as a compact decoration for the prompt, empty when they are not set.
+The only place that knows the chip vocabulary.  A state that constrains
+nothing renders nothing at all, so the prompt of someone who never
+touches a parameter is the prompt this package has always shown."
+  (let ((chips
+         (delq nil
+               (list (pcase (plist-get params :type)
+                       ('story "story")
+                       ('comment "comment"))
+                     (consult-hn--nonblank (plist-get params :author))
+                     (when-let* ((points (plist-get params :points)))
+                       (format ">%sp" points))
+                     (when-let* ((comments (plist-get params :comments)))
+                       (format ">%sc" comments))
+                     (pcase (plist-get params :range)
+                       ('24h "24h")
+                       ('week "7d")
+                       ('month "30d")
+                       ('year "1y"))
+                     (when (plist-get params :front-page) "front")
+                     (when (plist-get params :url-match) "url")
+                     (pcase (plist-get params :sort)
+                       ('relevance "rel")
+                       ('date "date"))))))
+    (if chips
+        (propertize (format " [%s]" (string-join chips " · "))
+                    'face 'consult-narrow-indicator)
+      "")))
 
 (defun consult-hn--api-url (params rendered)
   "Request URL for PARAMS carrying the RENDERED parameter alist."
@@ -290,6 +335,40 @@ through vertico-multiform, is respected."
     (setq-local vertico-count
                 (max 4 (floor vertico-count
                               (1+ (max 1 consult-hn-max-comment-lines)))))))
+
+(defvar consult-hn--chips-overlay nil
+  "Prompt decoration carrying the live session's parameters.")
+
+(defun consult-hn--chips-install ()
+  "Decorate the prompt of the session being set up with its parameters.
+The position is the one `consult-narrow' decorates, so the two stack
+rather than fight if narrowing is ever enabled here."
+  (consult-hn--chips-remove)
+  (setq consult-hn--chips-overlay
+        (consult--make-overlay
+         (1- (minibuffer-prompt-end)) (minibuffer-prompt-end)
+         'category 'consult-hn-chips-overlay
+         'before-string (consult-hn--params-chips consult-hn--params)))
+  (add-hook 'minibuffer-exit-hook #'consult-hn--chips-remove nil t))
+
+(defun consult-hn--chips-update ()
+  "Show what the parameters say now, if a session is there to show it on."
+  (when consult-hn--chips-overlay
+    (overlay-put consult-hn--chips-overlay 'before-string
+                 (consult-hn--params-chips consult-hn--params))))
+
+(defun consult-hn--chips-remove ()
+  "Take the chips off, however the session they belong to ended.
+Minibuffers are reused rather than killed, so an overlay outliving its
+session is an overlay in somebody else's prompt."
+  (when consult-hn--chips-overlay
+    (delete-overlay consult-hn--chips-overlay)
+    (setq consult-hn--chips-overlay nil)))
+
+(defun consult-hn--session-setup ()
+  "Prepare the minibuffer the session is about to run in."
+  (consult-hn--scale-vertico-count)
+  (consult-hn--chips-install))
 
 (defun consult-hn--plist-keywordize (plist)
   "Keywordize keys in a PLIST."
@@ -484,33 +563,50 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
 (defun consult-hn--async-source (async)
   "Async source function for HN search.
 ASYNC is the callback function to send results downstream."
-  (let ((request-buffers nil))
-    (cl-flet ((cancel ()
-                ;; a newer generation retires whatever is still in the
-                ;; air; killing the buffers stops the rest from arriving
-                (setq consult-hn--generation (1+ consult-hn--generation))
-                (clrhash consult-hn--seen)
-                (dolist (buf request-buffers)
-                  (when (buffer-live-p buf)
-                    (let ((kill-buffer-query-functions nil))
-                      (kill-buffer buf))))
-                (setq request-buffers nil)))
+  (let ((request-buffers nil)
+        ;; a string from the start: a parameter command can reach the
+        ;; restart before the first input reaches the source
+        (input ""))
+    (cl-labels ((cancel ()
+                  ;; a newer generation retires whatever is still in the
+                  ;; air; killing the buffers stops the rest from arriving
+                  (setq consult-hn--generation (1+ consult-hn--generation))
+                  (clrhash consult-hn--seen)
+                  (dolist (buf request-buffers)
+                    (when (buffer-live-p buf)
+                      (let ((kill-buffer-query-functions nil))
+                        (kill-buffer buf))))
+                  (setq request-buffers nil))
+                (restart ()
+                  (cancel)
+                  ;; the previous result set goes at once, rather than
+                  ;; the new one arriving mixed into it
+                  (funcall async 'flush)
+                  ;; parameters can carry a search on their own: an
+                  ;; author, or the front page, needs no query
+                  (when (or (<= 2 (length input))
+                            (consult-hn--params-searchable-p consult-hn--params))
+                    (consult-hn--fetch-page-async
+                     input 0 async consult-hn--generation
+                     (lambda (buf)
+                       (push buf request-buffers))))))
       (lambda (action)
         (pcase action
           ((pred stringp)
+           (setq input action)
+           (restart))
+
+          ('setup
+           (setq consult-hn--restart #'restart)
+           (funcall async action))
+
+          ('destroy
+           (setq consult-hn--restart nil)
            (cancel)
-
-           ;; Clear previous results
-           (funcall async 'flush)
-
-           ;; Start fetching if input is long enough
-           (when (<= 2 (length action))
-             (consult-hn--fetch-page-async
-              action 0 async consult-hn--generation
-              (lambda (buf)
-                (push buf request-buffers)))))
-
-          ('destroy (cancel))
+           ;; the stages downstream tear down here too: consult's own
+           ;; indicator deletes its overlay and the refresh stage its
+           ;; timer, neither of which happens if this is swallowed
+           (funcall async action))
 
           (_ (funcall async action)))))))
 
@@ -561,30 +657,169 @@ RESULT is the parsed JSON response from the HN API."
             'num-comments num-comments)))))
     (seq-filter #'identity)))
 
-(defun consult-hn (&optional initial)
-  "Consult interface for searching on Hacker News.
-INITIAL is for when it's called programmatically with an input."
+(defun consult-hn--param-set (key value)
+  "Give KEY the VALUE for the live session and search on it at once.
+The session keeps its input, its history and its window; only the
+result set is replaced."
+  (setq consult-hn--params
+        (plist-put (copy-sequence consult-hn--params) key value))
+  (consult-hn--chips-update)
+  (when consult-hn--restart
+    (funcall consult-hn--restart)))
+
+(defun consult-hn--cycle (value choices)
+  "The entry after VALUE in CHOICES, wrapping around at the end."
+  (car (or (cdr (memq value choices)) choices)))
+
+(defun consult-hn--read (prompt &optional initial)
+  "Read a string with PROMPT and INITIAL from inside the session.
+Reading while a minibuffer is live needs recursive minibuffers allowed,
+which is bound here and only here: setting it globally changes how every
+other package behaves."
+  (consult--local-let ((enable-recursive-minibuffers t))
+    (string-trim (read-string prompt initial))))
+
+(defun consult-hn--read-threshold (prompt current)
+  "Read a threshold with PROMPT, offering CURRENT to edit.
+An empty answer means no threshold at all."
+  (let ((answer (consult-hn--read prompt (and current
+                                              (number-to-string current)))))
+    (cond ((string-empty-p answer) nil)
+          ((string-match-p "\\`[0-9]+\\'" answer) (string-to-number answer))
+          (t (user-error "Not a whole number: %s" answer)))))
+
+(defun consult-hn-session-type ()
+  "Cycle the live session between everything, stories and comments."
   (interactive)
-  (minibuffer-with-setup-hook #'consult-hn--scale-vertico-count
-    (consult--read
-     (consult--async-pipeline
-      (consult--async-throttle)
-      #'consult-hn--async-source
-      (consult--async-transform #'consult-hn--async-transform))
-     :lookup #'consult-hn--async-lookup
-     :state (lambda (action cand)
-              (when-let* ((hn-obj (consult-hn--plist-keywordize
-                                   (text-properties-at 0 (or cand "")))))
-                (pcase action
-                  ('preview (apply consult-hn-preview-fn hn-obj))
-                  ('return (apply consult-hn-browse-fn hn-obj)))))
-     :prompt "HN Search: "
-     :sort nil
-     :initial (or initial consult-hn-initial-input-string)
-     :history '(:input consult-hn--history)
-     :require-match t
-     :category 'consult-hn-result
-     :annotate #'consult-hn--annotate)))
+  (consult--require-minibuffer)
+  (consult-hn--param-set
+   :type (consult-hn--cycle (plist-get consult-hn--params :type)
+                            '(all story comment))))
+
+(defun consult-hn-session-range ()
+  "Cycle how far back the live session reaches."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set
+   :range (consult-hn--cycle (plist-get consult-hn--params :range)
+                             '(all 24h week month year))))
+
+(defun consult-hn-session-sort ()
+  "Cycle the order the live session asks the endpoint for.
+The first choice is the one this package has always made on its own:
+newest first, unless the front page is asked for."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set
+   :sort (consult-hn--cycle (plist-get consult-hn--params :sort)
+                            '(nil date relevance))))
+
+(defun consult-hn-session-front-page ()
+  "Toggle whether the live session is confined to the front page."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set :front-page
+                         (not (plist-get consult-hn--params :front-page))))
+
+(defun consult-hn-session-url-match ()
+  "Toggle whether the live session matches URLs rather than text."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set :url-match
+                         (not (plist-get consult-hn--params :url-match))))
+
+(defun consult-hn-session-author ()
+  "Confine the live session to one author, or release it again."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set
+   :author (consult-hn--nonblank
+            (consult-hn--read "Author (empty for anyone): "
+                              (plist-get consult-hn--params :author)))))
+
+(defun consult-hn-session-points ()
+  "Set the points the live session's items have to beat."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set
+   :points (consult-hn--read-threshold "Minimum points (empty for none): "
+                                       (plist-get consult-hn--params :points))))
+
+(defun consult-hn-session-comments ()
+  "Set the comment count the live session's items have to beat."
+  (interactive)
+  (consult--require-minibuffer)
+  (consult-hn--param-set
+   :comments (consult-hn--read-threshold
+              "Minimum comments (empty for none): "
+              (plist-get consult-hn--params :comments))))
+
+(defvar consult-hn-session-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c t") #'consult-hn-session-type)
+    (define-key map (kbd "C-c a") #'consult-hn-session-author)
+    (define-key map (kbd "C-c p") #'consult-hn-session-points)
+    (define-key map (kbd "C-c c") #'consult-hn-session-comments)
+    (define-key map (kbd "C-c r") #'consult-hn-session-range)
+    (define-key map (kbd "C-c f") #'consult-hn-session-front-page)
+    (define-key map (kbd "C-c u") #'consult-hn-session-url-match)
+    (define-key map (kbd "C-c s") #'consult-hn-session-sort)
+    map)
+  "Parameter commands, live for as long as a session is.
+One prefix, one command per parameter, so `which-key' and friends
+document the surface without this package saying anything.  Not
+narrowing keys: narrowing holds one value at a time and is unbound for
+most users anyway.")
+
+(defconst consult-hn--param-keys
+  '(:query :type :author :points :comments :range :front-page :url-match :sort)
+  "Parameters a caller may set, the parameter model and nothing else.")
+
+(defun consult-hn--params-merge (params overrides)
+  "PARAMS with the OVERRIDES plist layered over them.
+A keyword outside the model is refused rather than ignored: silently
+dropping it leaves a keybinding that searches for something else than
+it says."
+  (let ((merged (copy-sequence params)))
+    (cl-loop for (key value) on overrides by #'cddr
+             do (unless (memq key consult-hn--param-keys)
+                  (user-error "Unknown `consult-hn' parameter: %S" key))
+             (setq merged (plist-put merged key value)))
+    merged))
+
+(defun consult-hn (&optional query &rest params)
+  "Consult interface for searching on Hacker News.
+QUERY is what the session starts with, for calling this from Lisp or
+from a keybinding.  PARAMS are keywords from the parameter model,
+`:type' `:author' `:points' `:comments' `:range' `:front-page'
+`:url-match' `:sort', which hold for this call only and do not outlive
+it.  Called interactively it takes neither, and the session inherits
+whatever the last one was shaped into."
+  (interactive)
+  (let* ((consult-hn--params (consult-hn--params-merge consult-hn--params params))
+         (initial (or query (plist-get consult-hn--params :query)
+                      consult-hn-initial-input-string)))
+    (minibuffer-with-setup-hook #'consult-hn--session-setup
+      (consult--read
+       (consult--async-pipeline
+        (consult--async-throttle)
+        #'consult-hn--async-source
+        (consult--async-transform #'consult-hn--async-transform))
+       :lookup #'consult-hn--async-lookup
+       :state (lambda (action cand)
+                (when-let* ((hn-obj (consult-hn--plist-keywordize
+                                     (text-properties-at 0 (or cand "")))))
+                  (pcase action
+                    ('preview (apply consult-hn-preview-fn hn-obj))
+                    ('return (apply consult-hn-browse-fn hn-obj)))))
+       :prompt "HN Search: "
+       :keymap consult-hn-session-map
+       :sort nil
+       :initial initial
+       :history '(:input consult-hn--history)
+       :require-match t
+       :category 'consult-hn-result
+       :annotate #'consult-hn--annotate))))
 
 (defun consult-hn--open (item)
   "Default Embark action for `consult-hn' ITEM."
