@@ -130,6 +130,18 @@ Depends on Q1. Implement the chosen semantics, fix `make test`, update the readm
 
 Smaller than it looks, and Q1 is now a question about defaults rather than about mechanism. Measured in Phase 2 with a throwaway probe under the stub: `consult--read` wraps every async table with `consult--async-split`, so the session already opens with `#` in the input, the query is what sits between the first and second `#`, and what follows the second one narrowed fifteen candidates to one without issuing a single request. Option A is therefore close to a documentation change plus the scenario that pins it; Option B means switching off machinery that is on by default. The probe is at `/tmp/consult-hn-live/split-check.el` and wants twenty lines to become a scenario, with the caveat that cost the first attempt a false negative: pick a filter term that genuinely appears in one fixture, since the timestamps make digits match everything.
 
+The work, in the order it wants doing.
+
+Step 3.1, answer Q1 and implement whatever it decides. Under Option A that is mostly leaving the default alone and saying so, plus deciding what happens to `consult-hn-initial-input-string`, which section 10 says becomes redundant and should be deprecated rather than removed. Under Option B it means passing an `:async-wrap` that leaves the split stage out, which is a bigger change than it sounds and undoes a working feature.
+
+Step 3.2, the e2e scenario the phase is really for: type into an open session past the second separator, assert the displayed count falls, and assert the request counter did not move. That is the only assertion in the suite that would notice if a future consult changed the default split style out from under this package.
+
+Step 3.3, `make test`. It calls plain `package-initialize` against the user's package directory, so it works only on CI; section 0 has the invocation every session has used instead, which is the shape the target should take. Note that CI runs Emacs 29.4 and 30.1 with the transient they bundle, 0.4.3 and 0.7.2.2, rather than the 0.9 this package declares, and that the suite now loads `consult-hn-transient.el`, so any fix should keep working there; the way to check locally is to put `lisp/transient.el` from the matching Emacs release tag on the load path.
+
+Step 3.4, the readme, which is further behind than the code. It still teaches `#SEARCH-TERM -- ADDITIONAL-PARAMETERS` as the way to pass parameters, still presents the transient as the convenient way in when Q4 made it the optional one, and says nothing about the session keys under `C-c`, the chips, or the keyword arguments `consult-hn` now takes. Its `consult-hn-initial-input-string` examples are written in the syntax D12 removes from the documentation. A changelog entry leads with the behaviour change rather than burying it (R3).
+
+Step 3.5, the merge. Delete both of these documents, and decide whether this reaches `main` as a pull request for the record or as a fast forward. The branch has never been pushed, so nothing is public yet, and Q3 is moot now that everything sits on one branch.
+
 ## 5. Ground rules
 
 One phase per session; each ends at a commit with the tree green. Do not start a phase whose blocking question is unanswered. Update the spec when a decision changes, rather than letting the code drift from it. Report anything the harness cannot prove, and say so plainly instead of implying coverage that does not exist.
