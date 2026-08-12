@@ -70,7 +70,7 @@ e2e:
 	@cat test/consult-hn-e2e-results.txt
 	@grep -q '^EXIT:0' test/consult-hn-e2e-results.txt
 
-check-compile: deps
+check-compile: | $(ELPA)
 	@echo "Checking byte-compilation..."
 	$(EMACS) -Q --batch \
 	--eval "(require 'package)" \
@@ -81,5 +81,7 @@ check-compile: deps
 	--eval "(package-install 'ts)" \
 	--eval "(setq byte-compile-error-on-warn t)" \
 	--eval "(add-to-list 'load-path \".\")" \
-	--eval "(byte-compile-file \"consult-hn.el\")" \
-    --eval "(byte-compile-file \"consult-hn-transient.el\")"
+	--eval "(unless (and (byte-compile-file \"consult-hn.el\") \
+	                     (byte-compile-file \"consult-hn-transient.el\")) \
+	           (error \"Byte-compilation failed\"))"
+	@rm -f *.elc
