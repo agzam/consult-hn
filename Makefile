@@ -1,5 +1,5 @@
 
-.PHONY: help test deps check-compile
+.PHONY: help test deps check-compile e2e e2e-deps
 
 define DEPS_SCRIPT
 (progn
@@ -12,6 +12,20 @@ define DEPS_SCRIPT
 (package-install 'ts))
 endef
 export DEPS_SCRIPT
+
+# Deliberately a separate sandbox from .elpa: the unit suite must keep
+# proving the package works without vertico or orderless installed.
+define E2E_DEPS_SCRIPT
+(progn
+(require 'package)
+(setq package-user-dir (expand-file-name ".elpa-e2e"))
+(add-to-list 'package-archives '("melpa" . "http://melpa.org/packages/"))
+(package-initialize)
+(package-refresh-contents)
+(dolist (p '(consult vertico orderless ts))
+(unless (package-installed-p p) (package-install p))))
+endef
+export E2E_DEPS_SCRIPT
 
 help:
 	@echo "Available commands:"
@@ -28,6 +42,17 @@ test:
 	emacs --batch --funcall package-initialize --directory . \
 	--eval '(add-to-list '\''load-path "..")' \
 	--funcall buttercup-run-discover
+
+e2e-deps:
+	@echo "Installing e2e sandbox dependencies into .elpa-e2e"
+	emacs --batch --eval "$$E2E_DEPS_SCRIPT"
+
+e2e:
+	rm -f test/consult-hn-e2e-results.txt
+	TERM=xterm-256color script -q /dev/null emacs -nw -Q -l test/consult-hn-e2e-boot.el \
+	  < /dev/null > /dev/null 2>&1 || true
+	@cat test/consult-hn-e2e-results.txt
+	@grep -q '^EXIT:0' test/consult-hn-e2e-results.txt
 
 check-compile: deps
 	@echo "Checking byte-compilation..."

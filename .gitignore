@@ -3,4 +3,6 @@
 tmp/
 
 .elpa/
+.elpa-e2e/
 *.elc
+test/consult-hn-e2e-results.txt
