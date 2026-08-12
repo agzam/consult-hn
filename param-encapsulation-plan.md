@@ -144,6 +144,14 @@ Step 3.4, the readme, which is further behind than the code. It still teaches `#
 
 Step 3.5, the merge. Delete both of these documents, and decide whether this reaches `main` as a pull request for the record or as a fast forward. The branch has never been pushed, so nothing is public yet, and Q3 is moot now that everything sits on one branch.
 
+Done. 126 unit specs, 92 e2e checks over fifteen scenarios green twice in a row, the compile gate clean, and a live run against hn.algolia.com where `clojure` cost ten requests for a thousand items and typing a filter past the second separator narrowed those to two without moving the request counter.
+
+Three scenarios were added where the phase asked for one. Narrowing sending no requests is the one it was for, and it discriminates: with the split style forced to `none`, five of its eight checks go red and typing the filter fires three requests. The other two were owed from spec section 13 and had never been written. Abort mid-stream stopping the chain discriminates by taking the `cancel` call out of the source's `destroy` branch, whereupon an abandoned session pages on from `(0 1)` to `(0 1 2)` and receives the response it should never have seen. The legacy suffix pins that a hand-written ` -- tags=story` still reaches the endpoint and still outranks the state object, which is the layering rule in spec section 5 and the only reason D12 keeps the parser. The harness grew one knob for the first of those, a page delay the abort scenario raises so the interruption lands while a page is genuinely in flight; at the usual thirty milliseconds the chain is over before a poll can see it.
+
+`make test` was not broken the way section 0 describes. It works whenever `.elpa` is populated and only a clean checkout dies on it, so the fix is an order-only prerequisite that builds the sandbox once. `check-compile` now carries the same prerequisite, so it no longer refreshes the archives over the network on every run, and it now reads the return value of `byte-compile-file` instead of discarding it: verified by planting a call to a function that does not exist and watching `make` exit 2.
+
+The compile gate is now in CI, which never ran it. The risk that could not be closed from this machine is that CI runs Emacs 29.4 and 30.1 while only 31 is installed here. The gate was proven against the transient those two bundle, 0.4.3 and 0.7.2.2, with no warning attributed to either of our files, and the package uses nothing newer than the 29.4 it declares. But the first push is the first time any commit on this branch meets those Emacsen at all.
+
 ## 5. Ground rules
 
 One phase per session; each ends at a commit with the tree green. Do not start a phase whose blocking question is unanswered. Update the spec when a decision changes, rather than letting the code drift from it. Report anything the harness cannot prove, and say so plainly instead of implying coverage that does not exist.

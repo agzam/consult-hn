@@ -48,6 +48,11 @@ Models a redirect, where `url-retrieve' hands one buffer back and
 another one delivers: cancelling a search by killing what you were
 handed cannot reach it.  Nil for the ordinary path.")
 
+(defvar consult-hn-e2e--page-delay 0.03
+  "Seconds the stub holds a page before delivering it.
+Raised by the scenario that has to interrupt a chain while a page is
+still in the air, which at the default is over before a poll sees it.")
+
 (defvar consult-hn-e2e--detached-delay 0.4
   "How long a detached response stays in the air.")
 
@@ -188,7 +193,7 @@ response that cancelling cannot reach."
       (setq-local url-http-end-of-headers (copy-marker (point)))
       (insert (consult-hn-e2e--payload url)))
     (run-at-time
-     (if detached consult-hn-e2e--detached-delay 0.03) nil
+     (if detached consult-hn-e2e--detached-delay consult-hn-e2e--page-delay) nil
      (lambda ()
        (when (buffer-live-p response)
          (push url consult-hn-e2e--delivered)
@@ -833,6 +838,87 @@ changing its default style out from under us."
            (lambda () (zerop (minibuffer-depth)))
            (lambda (_) (funcall k)))))))))
 
+(defvar consult-hn-e2e--default-page-delay consult-hn-e2e--page-delay
+  "The delivery delay every scenario but the abort one runs under.")
+
+(defun consult-hn-e2e--scenario-abort-mid-stream (k)
+  "Abandoning a session stops the paging chain where it stands."
+  (consult-hn-e2e--reset)
+  ;; slow enough that the abort lands while a page is genuinely in
+  ;; flight: at the usual delay the chain is over before a poll sees it
+  (setq consult-hn-e2e--page-delay 0.5)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S14 the first page lands"
+   (lambda () (eql 5 (or (consult-hn-e2e--candidate-count) 0)))
+   (lambda (_)
+     (let ((requested (consult-hn-e2e--pages-requested)))
+       (consult-hn-e2e--check
+        "S14 the next page is already in the air"
+        (equal requested '(0 1))
+        (format "%S" requested))
+       (consult-hn-e2e--keys "C-g")
+       (consult-hn-e2e--await
+        "S14 the session closes mid-chain"
+        (lambda () (zerop (minibuffer-depth)))
+        (lambda (_)
+          ;; longer than the page in flight had left to run
+          (run-at-time
+           1 nil
+           (lambda ()
+             (consult-hn-e2e--check
+              "S14 nothing was asked for after the abort"
+              (equal (consult-hn-e2e--pages-requested) requested)
+              (format "before=%S after=%S" requested
+                      (consult-hn-e2e--pages-requested)))
+             ;; the control: the response was stopped, not merely ignored
+             (consult-hn-e2e--check
+              "S14 the page in flight never arrived"
+              (not (seq-some (lambda (u) (eql 1 (consult-hn-e2e--url-page u)))
+                             consult-hn-e2e--delivered))
+              (format "%S" (mapcar #'consult-hn-e2e--url-page
+                                   consult-hn-e2e--delivered)))
+             (consult-hn-e2e--check
+              "S14 the restart handle went with the session"
+              (null consult-hn--restart)
+              (format "%S" consult-hn--restart))
+             (setq consult-hn-e2e--page-delay
+                   consult-hn-e2e--default-page-delay)
+             (funcall k)))))))))
+
+(defun consult-hn-e2e--scenario-legacy-suffix (k)
+  "The undocumented ` -- key=value' suffix still reaches the endpoint.
+It outranks the state object by design: a keybinding that spells a
+parameter out by hand has to keep meaning what it says."
+  (consult-hn-e2e--reset)
+  ;; the state asks for comments, the suffix for stories
+  (setq consult-hn--params
+        (plist-put (copy-sequence consult-hn--params) :type 'comment))
+  (run-at-time 0 nil #'consult-hn "emacs -- tags=story")
+  (consult-hn-e2e--await
+   "S15 the results come back under the suffix"
+   (lambda () (seq-some (lambda (c) (string-match-p "Tagged story" c))
+                        (consult-hn-e2e--candidates)))
+   (lambda (_)
+     (let ((url (car (last consult-hn-e2e--requests))))
+       (consult-hn-e2e--check
+        "S15 the suffix reached the endpoint verbatim"
+        (equal (consult-hn-e2e--url-tags url) "story")
+        (format "%S" (consult-hn-e2e--url-tags url)))
+       (consult-hn-e2e--check
+        "S15 the query went out with the suffix stripped off it"
+        (equal (consult-hn-e2e--url-query url) "emacs")
+        (format "%S" (consult-hn-e2e--url-query url)))
+       (consult-hn-e2e--check
+        "S15 the state's own type did not go out beside it"
+        (not (string-match-p "comment" url))
+        url))
+     (consult-hn-e2e--keys "C-g")
+     (consult-hn-e2e--await
+      "S15 session closes on abort"
+      (lambda () (zerop (minibuffer-depth)))
+      (lambda (_) (funcall k))))))
+
 ;;; Runner
 
 (defvar consult-hn-e2e--scenarios
@@ -848,7 +934,9 @@ changing its default style out from under us."
         #'consult-hn-e2e--scenario-recursive-read
         #'consult-hn-e2e--scenario-from-lisp
         #'consult-hn-e2e--scenario-transient
-        #'consult-hn-e2e--scenario-narrowing)
+        #'consult-hn-e2e--scenario-narrowing
+        #'consult-hn-e2e--scenario-abort-mid-stream
+        #'consult-hn-e2e--scenario-legacy-suffix)
   "Ordered; scenarios 2 and 3 observe the session opened by the first.")
 
 (defun consult-hn-e2e--run-scenarios (scenarios done)
