@@ -1162,4 +1162,67 @@ Reads the keyword outside any expectation; see `consult-hn-tests--typed'."
     (expect (consult-hn--async-lookup nil '() nil nil) :to-be nil)
     (expect (consult-hn--async-lookup "cand" nil nil nil) :to-be nil)))
 
+;; `defvar' without a value only marks a variable special in the file it
+;; appears in, so the package's own declarations do not reach here
+(defvar embark-general-map)
+(defvar embark-keymap-alist)
+(defvar embark-default-action-overrides)
+
+(describe "embark actions"
+  (let ((item (propertize "Test Title"
+                          'title "Test Title"
+                          'author "someone"
+                          'story-url "https://example.com/article"
+                          'hn-story-url "https://news.ycombinator.com/item?id=1"
+                          'hn-object-url "https://news.ycombinator.com/item?id=2")))
+
+    (it "hands the whole object to `consult-hn-browse-fn'"
+      (let (seen)
+        (let ((consult-hn-browse-fn (lambda (&rest args) (setq seen args))))
+          (consult-hn--open item))
+        (expect (plist-get seen :title) :to-equal "Test Title")
+        (expect (plist-get seen :hn-object-url)
+                :to-equal "https://news.ycombinator.com/item?id=2")))
+
+    (it "browses the object, not the story it points at"
+      (spy-on 'browse-url)
+      (consult-hn--browse-url item)
+      (expect 'browse-url :to-have-been-called-with
+              "https://news.ycombinator.com/item?id=2"))
+
+    (it "opens the object in eww"
+      (spy-on 'consult-hn-eww)
+      (consult-hn--browse-eww item)
+      (expect (plist-get (spy-calls-args-for 'consult-hn-eww 0) :hn-object-url)
+              :to-equal "https://news.ycombinator.com/item?id=2"))
+
+    (it "copies the object url"
+      (let ((kill-ring nil)
+            (kill-ring-yank-pointer nil)
+            (interprogram-cut-function nil))
+        (consult-hn--copy-url item)
+        (expect (current-kill 0) :to-equal "https://news.ycombinator.com/item?id=2")))
+
+    (it "keeps every browse key on one prefix"
+      (expect (lookup-key consult-hn-embark-map (kbd "b b")) :to-be #'consult-hn--open)
+      (expect (lookup-key consult-hn-embark-map (kbd "b o")) :to-be #'consult-hn--browse-url)
+      (expect (lookup-key consult-hn-embark-map (kbd "b e")) :to-be #'consult-hn--browse-eww)
+      (expect (lookup-key consult-hn-embark-map (kbd "w")) :to-be #'consult-hn--copy-url))
+
+    (it "registers the category with embark"
+      ;; embark is not a test dependency, so stand in for what it defines
+      (let ((embark-general-map (make-sparse-keymap))
+            (embark-keymap-alist nil)
+            (embark-default-action-overrides nil)
+            (parent (keymap-parent consult-hn-embark-map)))
+        (unwind-protect
+            (progn
+              (consult-hn--embark-setup)
+              (expect (alist-get 'consult-hn-result embark-keymap-alist)
+                      :to-be 'consult-hn-embark-map)
+              (expect (alist-get 'consult-hn-result embark-default-action-overrides)
+                      :to-be #'consult-hn--open)
+              (expect (keymap-parent consult-hn-embark-map) :to-be embark-general-map))
+          (set-keymap-parent consult-hn-embark-map parent))))))
+
 ;;; consult-hn-tests.el ends here

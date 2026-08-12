@@ -90,6 +90,17 @@ Once you find HN items you have multiple choices:
 - browse (close the search buffer, open the item)
 - push all the found items into Embark-Collect buffer. See [[https://github.com/oantolin/embark][Embark's]] documentation for that.
 
+*** Embark
+
+Results are of the ~consult-hn-result~ category, and ~embark-act~ on one offers:
+
+| ~b b~ | open it with ~consult-hn-browse-fn~, the same thing =RET= does |
+| ~b o~ | open it in a web browser                                       |
+| ~b e~ | open it in eww                                                 |
+| ~w~   | copy its Hacker News url                                       |
+
+The item is the same in every case - the Hacker News object the search returned, not the story it links to; only the reader differs. Bind your own on ~consult-hn-embark-map~.
+
  You can customize ~consult-hn-browse-fn~ var, setting it to a function, here's for example how to make it always open selected item in the browser.
 
 #+begin_src emacs-lisp
@@ -152,4 +163,5 @@ A search pages results in until it runs out or hits ~consult-hn-max-pages~, ten 
 - Comments under a candidate are capped at ~consult-hn-max-comment-lines~ (2) with an ellipsis, and ~vertico-count~ is scaled for the session, so one long comment no longer pushes the minibuffer to dozens of lines.
 - ~consult-hn~ takes a query and parameters from Lisp, e.g. ~(consult-hn "emacs" :type 'story :points 100)~.
 - ~consult-hn-initial-input-string~ is obsolete. Pass the arguments instead; it still works meanwhile.
-- Fixes: a superseded search can no longer land its pages in the results, items the endpoint repeats across pages are dropped, and the package byte-compiles clean on Emacs 31.
+- Embark does more than exit the session: ~b b~ opens the item with ~consult-hn-browse-fn~, ~b o~ in a web browser, ~b e~ in eww, and ~w~ copies its Hacker News url.
+- Fixes: a superseded search can no longer land its pages in the results, items the endpoint repeats across pages are dropped, the Embark registration no longer depends on Embark having loaded first, and the package byte-compiles clean on Emacs 31.

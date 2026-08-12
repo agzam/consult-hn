@@ -812,18 +812,61 @@ whatever the last one was shaped into."
        :category 'consult-hn-result
        :annotate #'consult-hn--annotate))))
 
+(defun consult-hn--item (item)
+  "The Hacker News object behind Embark's ITEM.
+Embark hands an action the candidate string itself, and everything the
+endpoint returned rides along on its text properties."
+  (consult-hn--plist-keywordize (text-properties-at 0 (or item ""))))
+
 (defun consult-hn--open (item)
   "Default Embark action for `consult-hn' ITEM."
-  (thread-last
-    (or item "")
-    (text-properties-at 0)
-    consult-hn--plist-keywordize
-    (apply consult-hn-browse-fn)))
+  (apply consult-hn-browse-fn (consult-hn--item item)))
 
+(defun consult-hn--browse-url (item)
+  "Open ITEM in a web browser."
+  (browse-url (plist-get (consult-hn--item item) :hn-object-url)))
+
+(defun consult-hn--browse-eww (item)
+  "Open ITEM in `eww'."
+  (apply #'consult-hn-eww (consult-hn--item item)))
+
+(defun consult-hn--copy-url (item)
+  "Copy ITEM's Hacker News url."
+  (let ((url (plist-get (consult-hn--item item) :hn-object-url)))
+    (kill-new url)
+    (message "Copied %s" url)))
+
+(defvar-keymap consult-hn-embark-browse-map
+  :doc "Where a `consult-hn' result opens.
+The item is the same in every case, the Hacker News object the search
+returned; only the reader differs."
+  :name "browse"
+  "b" #'consult-hn--open
+  "o" #'consult-hn--browse-url
+  "e" #'consult-hn--browse-eww)
+
+(defvar-keymap consult-hn-embark-map
+  :doc "Embark actions for a `consult-hn' result."
+  "b" consult-hn-embark-browse-map
+  "w" #'consult-hn--copy-url)
+
+(defvar embark-general-map)
+(defvar embark-keymap-alist)
 (defvar embark-default-action-overrides)
-(when (featurep 'embark)
+
+(defun consult-hn--embark-setup ()
+  "Register the `consult-hn-result' category with Embark."
+  (set-keymap-parent consult-hn-embark-map embark-general-map)
+  (setf (alist-get 'consult-hn-result embark-keymap-alist)
+        'consult-hn-embark-map)
   (setf (alist-get 'consult-hn-result embark-default-action-overrides)
         #'consult-hn--open))
+
+;; not `featurep': whichever of the two loads second has to be the one
+;; that registers, and a search can well be the thing that pulls
+;; `consult-hn' in before Embark was ever called
+(with-eval-after-load 'embark
+  (consult-hn--embark-setup))
 
 (provide 'consult-hn)
 ;;; consult-hn.el ends here
