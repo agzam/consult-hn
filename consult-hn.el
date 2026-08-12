@@ -5,7 +5,7 @@
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: January 30, 2025
-;; Version: 1.0.0
+;; Version: 1.1.0
 ;; Keywords: search extensions
 ;; Homepage: https://github.com/agzam/consult-hn
 ;; Package-Requires: ((emacs "29.4") (consult "2.0") (ts "0.3") (transient "0.9"))
@@ -45,6 +45,11 @@
   "Initial input string."
   :type 'string
   :group 'consult-hn)
+
+(make-obsolete-variable
+ 'consult-hn-initial-input-string
+ "pass a query and parameters to `consult-hn' as arguments instead."
+ "1.1.0")
 
 (defcustom consult-hn-max-comment-lines 2
   "Comment lines shown under a candidate.
@@ -782,7 +787,9 @@ whatever the last one was shaped into."
   (interactive)
   (let* ((consult-hn--params (consult-hn--params-merge consult-hn--params params))
          (initial (or query (plist-get consult-hn--params :query)
-                      consult-hn-initial-input-string)))
+                      (with-suppressed-warnings
+                          ((obsolete consult-hn-initial-input-string))
+                        consult-hn-initial-input-string))))
     (minibuffer-with-setup-hook #'consult-hn--session-setup
       (consult--read
        (consult--async-pipeline

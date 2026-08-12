@@ -265,6 +265,13 @@ silently and surface only as a watchdog timeout much later."
   "Number of candidates the completion table currently serves."
   (length (consult-hn-e2e--candidates)))
 
+(defun consult-hn-e2e--displayed ()
+  "Candidates surviving the filter, as vertico counted them to size itself.
+Not the same as what the table serves: the table hands out everything
+fetched, and the filter lives between it and the display."
+  (when-let* ((mb (consult-hn-e2e--minibuffer)))
+    (with-current-buffer mb vertico--total)))
+
 (defun consult-hn-e2e--chip-overlays (buffer)
   "Chip overlays BUFFER carries, found the way redisplay finds them."
   (when (buffer-live-p (get-buffer buffer))
@@ -774,6 +781,58 @@ arguments the real infixes produce."
             (lambda () (null transient--prefix))
             (lambda (_) (funcall k))))))))))
 
+(defun consult-hn-e2e--scenario-narrowing (k)
+  "Filtering what was already fetched costs nothing at the endpoint.
+The split stage comes from `consult--async-wrap' rather than from this
+package, so this is the assertion that would notice a future consult
+changing its default style out from under us."
+  (consult-hn-e2e--reset)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S13 the whole result set reaches the display"
+   (lambda () (eql 15 (consult-hn-e2e--displayed)))
+   (lambda (_)
+     (let ((requests-before consult-hn-e2e--requests))
+       (consult-hn-e2e--check
+        "S13 the session is seeded with the separator"
+        (equal (consult-hn-e2e--input) "#emacs lisp")
+        (format "%S" (consult-hn-e2e--input)))
+       ;; a word carried by one fixture comment and nothing else: a
+       ;; digit would match every candidate through the timestamps
+       (consult-hn-e2e--keys "# y e t")
+       (consult-hn-e2e--await
+        "S13 typing past the second separator narrows the display"
+        (lambda () (eql 1 (consult-hn-e2e--displayed)))
+        (lambda (_)
+          (consult-hn-e2e--check
+           "S13 the query half of the input is left alone"
+           (equal (consult-hn-e2e--input) "#emacs lisp#yet")
+           (format "%S" (consult-hn-e2e--input)))
+          (consult-hn-e2e--check
+           "S13 what survives is the candidate carrying the word"
+           (let ((rendered (consult-hn-e2e--rendered)))
+             (and rendered
+                  (string-match-p "Story title 9" rendered)
+                  (not (string-match-p "Story title 1" rendered))))
+           (format "%S" (consult-hn-e2e--rendered)))
+          ;; the filter is a view, not a fetch: everything paged in is
+          ;; still there behind it
+          (consult-hn-e2e--check
+           "S13 the fetched set is untouched behind the filter"
+           (eql 15 (consult-hn-e2e--candidate-count))
+           (format "%S" (consult-hn-e2e--candidate-count)))
+          (consult-hn-e2e--check
+           "S13 narrowing issued no request at all"
+           (equal consult-hn-e2e--requests requests-before)
+           (format "before=%d after=%d"
+                   (length requests-before)
+                   (length consult-hn-e2e--requests)))
+          (consult-hn-e2e--keys "C-g")
+          (consult-hn-e2e--await
+           "S13 session closes on abort"
+           (lambda () (zerop (minibuffer-depth)))
+           (lambda (_) (funcall k)))))))))
+
 ;;; Runner
 
 (defvar consult-hn-e2e--scenarios
@@ -788,7 +847,8 @@ arguments the real infixes produce."
         #'consult-hn-e2e--scenario-parameter-key
         #'consult-hn-e2e--scenario-recursive-read
         #'consult-hn-e2e--scenario-from-lisp
-        #'consult-hn-e2e--scenario-transient)
+        #'consult-hn-e2e--scenario-transient
+        #'consult-hn-e2e--scenario-narrowing)
   "Ordered; scenarios 2 and 3 observe the session opened by the first.")
 
 (defun consult-hn-e2e--run-scenarios (scenarios done)

@@ -5,7 +5,7 @@
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: January 30, 2025
-;; Version: 1.0.0
+;; Version: 1.1.0
 ;; Keywords: search extensions
 ;; Homepage: https://github.com/agzam/consult-hn
 ;; Package-Requires: ((emacs "29.4") (consult "2.0") (ts "0.3") (transient "0.9"))

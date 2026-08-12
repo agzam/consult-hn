@@ -78,7 +78,7 @@ D9. Results are deduplicated by `objectID` per chain. `search_by_date` paginates
 
 D10. The annotation is capped and cached. A `consult-hn-max-comment-lines` defcustom (default 2 or 3, to be settled by eye) with an ellipsis at the cut, plus session-local `vertico-count` scaling by the per-candidate line footprint, exactly as landed in the sibling package. The inline `:annotate` lambda is extracted into a named function, which also makes it testable; it currently is not. Filled text is cached per candidate, since today it is recomputed for every visible candidate on every keystroke.
 
-D11. Input semantics are settled in section 9 and are the one genuinely user-visible behavioural choice. Recorded there rather than here because it needs a decision, not a rationale.
+D11. Input semantics are settled in section 9. Recorded there rather than here because it needed a decision, not a rationale, and the decision was to keep what consult already does and what this package already documented.
 
 D12. The `--` syntax keeps being parsed when present, is removed from the documentation, and gains no deprecation message (no echo-area chatter). Programmatic callers get keyword arguments. Rationale: the package is on MELPA and someone may have it in a keybinding; silent compatibility costs one branch in one function.
 
@@ -136,9 +136,9 @@ Triggered by any parameter command, and by a query change if section 9 makes the
 7. Update the chips overlay.
 8. Results flow through the existing `indicator` and `refresh` stages downstream of the source, so the completion UI updates without additional work.
 
-## 9. Input semantics, decision required
+## 9. Input semantics, settled as Option A
 
-With parameters gone, the input line is free. Two coherent options, and this is a genuine behaviour change either way.
+With parameters gone, the input line is free. Two coherent options were weighed, kept below for the trail although two of the claims in them turned out to be wrong.
 
 Option A, consistent with the sibling package: the session opens with `#` pre-inserted; text after `#` is the server query; a closing `#` switches to client-side narrowing over everything fetched. Plain input with no leading `#` narrows. Only `#` acts as a separator, never arbitrary punctuation, because HN queries legitimately contain `@`, `:` and URLs. Argument for: a broad query pulls up to a thousand candidates and filtering them locally is free and instant; consistency with the sibling package the same person maintains.
 
@@ -146,13 +146,21 @@ Option B, status quo preserved: plain typing remains the server query, and a sep
 
 Recommendation: Option A, for symmetry and because P1 is the complaint that started this. Not implemented until confirmed.
 
-What Phase 2 measured changes the shape of the decision, though not the recommendation. Option A is very nearly what already happens: `consult--async-wrap` installs the split stage for every async table, so the session opens with `#` sitting in the input, everything up to a second `#` is the server query, and everything after it filters the fetched candidates without touching the network. That was verified with the stub counting requests, narrowing fifteen candidates to one on a word that only appears in a comment, at a cost of zero requests. So Phase 3 is not building a split; it is deciding whether to keep consult's default seeding, saying so in the readme, and pinning the behaviour with the e2e scenario that freezes the request counter across typing. Option B, by contrast, now means deliberately turning off machinery that is already on.
+What Phase 2 measured changes the shape of the decision, though not the recommendation. Option A is very nearly what already happens: `consult--async-wrap` installs the split stage for every async table, so the session opens with `#` sitting in the input, everything up to a second `#` is the server query, and everything after it filters the fetched candidates without touching the network. That was verified with the stub counting requests, narrowing fifteen candidates to one on a word that only appears in a comment, at a cost of zero requests. So Phase 3 is not building a split; it is deciding whether to keep consult's default seeding, saying so in the readme, and pinning the behaviour with the e2e scenario that freezes the request counter across typing.
+
+Answered in Phase 3 as Option A, and two things above want correcting before they mislead whoever reads this next. Option A is not a behaviour change at all: `consult--async-wrap` prepends `consult--async-split` to every async table handed to `consult--read`, so the `#` has sat in this package's prompt for as long as the package has been async, and the readme has taught both `#Emacs` as the query form and `#Emacs#Vim` as narrowing since before this branch existed. What Phases 1 and 2 changed is that the parameter suffix no longer occupies the free half of the input. And Option B is not turning off machinery that is on: worded as it is above, plain typing for the query and a separator for the filter, it is exactly `consult--split-separator`, which consult already ships as the `comma` and `semicolon` styles, so it costs one entry in `consult-async-split-styles-alist` and a `let` around `consult--read`, five lines rather than a rewrite.
+
+What decides it is neither of those, and neither document had raised it. The split stage reads the user's `consult-async-split-style`, so Option A inherits whatever a consult user already chose, commas for the people who chose commas and no splitting at all for the people who turned it off, and it behaves like every other async consult command in their configuration. Option B takes that choice away for this one command. A published package overriding a global preference of the framework it extends needs a better reason than symmetry with a sibling package.
+
+The one genuine argument for Option B is that HN queries legitimately contain the separator, `C#` and `F#` and `#1` being the obvious ones. `consult--split-perl` takes the separator from the first punctuation character rather than insisting on `#`, so `/C#/` sends `C#` to the endpoint verbatim. That is a readme line rather than a design change, and it is the one thing about the default a user cannot be expected to work out unaided. It also makes Option A's third sentence above wrong where it says arbitrary punctuation never separates: it does, whenever the input starts with it, which is the mechanism the escape hatch is made of and equally the reason deleting the seeded `#` and opening with `@dang` searches for `dang`.
 
 ## 10. Backwards compatibility
 
 Retained: the ` -- key=value` input syntax is still parsed when present, undocumented and unwarned (D12). `consult-hn-default-search-params` continues to work, merged under the state object.
 
 Changed: `consult-hn` gains keyword arguments; `consult-hn-transient--format-query` disappears along with the string bridge; `consult-hn-initial-input-string` becomes redundant if Option A is chosen and should be deprecated rather than removed.
+
+Settled in Phase 3: obsoleted, not removed, with `make-obsolete-variable` pointing at the keyword arguments, and still read so that anyone who has it set keeps their session seeded. Both of its documented uses were parameter-shaped, `-- tags=front_page` and `-- numericFilters=num_comments>11`, written in the syntax D12 takes out of the documentation, and both are now the state object's business: the first is a keybinding on `(consult-hn nil :front-page t)` or one press of `C-c f`, the second `:comments 11`. What the variable was left holding, seeding a literal query, was never what it advertised. Our own read of it is wrapped in `with-suppressed-warnings`, since the compile gate runs with `byte-compile-error-on-warn` and would otherwise fail on our own deprecation.
 
 ## 11. Explicitly out of scope
 
@@ -210,13 +218,13 @@ Phase 1, engine. Parameter state object and rendering, page cap and `hitsPerPage
 
 Phase 2, session UI. Keymap and parameter commands, chips overlay, restart handle wiring, transient rewritten onto the state object. Acceptance: e2e scenarios for parameter re-query, chips lifecycle, recursive read, plus the leak assertion. Steps 2.1 to 2.5 done: 120 unit specs and 66 e2e checks over eleven scenarios, run twice, plus a live run against the real endpoint in a real interactive Emacs where `C-c a` read an author, the results came back authored by them alone, the chips said so, and the session closed leaving nothing behind. Three defences were shown to discriminate by removing them and watching the suite go red: the chips teardown, the local binding of `enable-recursive-minibuffers`, and, before it was fixed, the swallowed `destroy`. Step 2.6 followed once Q4 was answered, and Phase 2 is complete: 124 unit specs and 73 e2e checks over twelve scenarios, the last of which drives the real menu on the keys a user presses, sets the type, searches, and asserts the session came up under it. That scenario discriminates too: breaking the menu's reading of its own arguments turns three of its checks red. The menu was also run against the transient Emacs 29.4 and 30.1 bundle, 0.4.3 and 0.7.2.2, since the suite now loads that file for the first time on CI.
 
-Phase 3, input semantics and documentation. The section 9 decision, split style if Option A, readme and changelog, e2e for narrowing sending no requests.
+Phase 3, input semantics and documentation. The section 9 decision, which came back as keep what is already there, the obsoletion of `consult-hn-initial-input-string`, `make test`, readme and changelog, e2e for narrowing sending no requests.
 
 Recommendation on session splitting: not one session. Phase 0 is comfortably one. Phase 1 is one. Phase 2 is the largest and may itself want two, one for the session UI and one for the transient. Phase 3 is one, and can absorb the e2e harness construction if it is not built in Phase 2. Rate limits and context exhaustion are the practical argument as much as the size is; each phase is designed to end at a commit so an interrupted session resumes cleanly.
 
 ## 16. Open questions
 
-Q1. Section 9, Option A or Option B.
+Q1. Section 9, Option A or Option B. Answered: Option A, which turns out to be the status quo rather than a change, because the split stage is installed for every async table and reads the user's own `consult-async-split-style`. Option B was affordable, five lines, and was refused for overriding that setting rather than for its cost.
 Q2. Chip vocabulary and separator, `[story · pg · >100p · 7d]` as proposed or something terser.
 Q3. Whether Phase 0 merges to main on its own ahead of the redesign, which I would recommend since it fixes a broken local build.
 Q4. Whether the transient should remain the primary entry point, or become optional with the session as the main command. Answered: optional. The session shapes parameters itself now, so the menu is a way to compose a search before opening one rather than the way in.

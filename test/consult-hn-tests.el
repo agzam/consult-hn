@@ -703,6 +703,14 @@
               :to-equal consult-hn-initial-input-string)
       (expect (plist-get consult-hn-tests--read-args :params) :to-equal before)))
 
+  (it "still seeds the session from the obsolete seed variable"
+    ;; obsolete, not removed: it is a published defcustom and somebody
+    ;; has it set
+    (let ((consult-hn-initial-input-string "lisp"))
+      (call-interactively #'consult-hn)
+      (expect (plist-get (plist-get consult-hn-tests--read-args :options) :initial)
+              :to-equal "lisp")))
+
   (it "hands the session its parameter keymap"
     (consult-hn "emacs")
     (expect (plist-get (plist-get consult-hn-tests--read-args :options) :keymap)
