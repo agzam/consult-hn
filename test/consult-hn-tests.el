@@ -802,6 +802,19 @@
               (expect (oref obj value) :to-equal (cadr row)))
           (oset obj value saved)))))
 
+  (it "answers to both spellings of the key that searches"
+    ;; graphical Emacs sends <return>, which arrives as RET only by
+    ;; translation, and only while nothing else claims it: a `keymap'
+    ;; text property claims it and beats even the menu's own map, which
+    ;; is how a chat or prompt buffer leaves the one action unreachable
+    (dolist (key '("RET" "<return>"))
+      (let ((spec (transient-get-suffix 'consult-hn-transient key)))
+        ;; the versions of transient Emacs bundles spell a suffix
+        ;; specification differently, hence looking in both places
+        (expect (or (plist-get (cdr spec) :command)
+                    (plist-get (car (last spec)) :command))
+                :to-equal 'consult-hn-transient-action))))
+
   (it "searches on what the menu says, and keeps it as the state"
     (spy-on 'transient-args :and-return-value '("--query=emacs" "--type=story"))
     (spy-on 'consult-hn)

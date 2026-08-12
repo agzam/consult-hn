@@ -228,7 +228,14 @@ leaves whatever it is shaped into afterwards."
     (consult-hn-transient--sort)]
 
    ["Actions"
-    ("RET" "Search" consult-hn-transient-action :transient t)]])
+    ("RET" "Search" consult-hn-transient-action :transient t)]]
+
+  ;; Graphical Emacs sends <return>, which arrives as RET only by
+  ;; translation, and only while nothing else claims it.  A `keymap'
+  ;; text property claims it and beats even the menu's own map, which is
+  ;; how prompt and chat buffers leave the one action key unreachable.
+  [:hide always
+   ("<return>" "Search" consult-hn-transient-action :transient t)])
 
 (provide 'consult-hn-transient)
 ;;; consult-hn-transient.el ends here
