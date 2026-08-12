@@ -46,6 +46,21 @@
   :type 'string
   :group 'consult-hn)
 
+(defcustom consult-hn-max-comment-lines 2
+  "Comment lines shown under a candidate.
+Completion UIs size their display by candidate count and are blind to
+the extra screen lines an annotation adds, so an uncapped comment
+balloons the minibuffer (or posframe) far past its usual height.
+Overflowing comments end in an ellipsis; the whole text stays
+filterable and is shown in full when the item is opened."
+  :type 'integer
+  :group 'consult-hn)
+
+(defcustom consult-hn-comment-width 120
+  "Width the shown comment lines are filled to."
+  :type 'integer
+  :group 'consult-hn)
+
 (defcustom consult-hn-preview-fn #'consult-hn-eww
   "Function pointer for browsing selected HN Story."
   :type 'function
@@ -112,6 +127,47 @@ HN-OBJECT-URL NUM-COMMENTS POINTS COMMENT - are all the HN-relevant things."
       (fill-region-as-paragraph (point-min) (point-max) (or justify 'left))
       (buffer-string))))
 
+(defun consult-hn--comment-annotation (comment)
+  "Render COMMENT as an indented block of at most a few lines.
+Only as much text as can possibly be shown is filled, so the cost does
+not grow with the length of the comment.  Returns nil for no comment."
+  (unless (or (null comment) (string-blank-p comment))
+    (let* ((cap (max 1 consult-hn-max-comment-lines))
+           (width consult-hn-comment-width)
+           (budget (* (1+ cap) width))
+           (bounded (truncate-string-to-width comment budget))
+           (lines (split-string
+                   (consult-hn--fill-string bounded width 'full) "\n" t))
+           (clipped (or (< cap (length lines))
+                        (< (length bounded) (length comment))))
+           (kept (take cap lines))
+           (kept (if clipped
+                     (append (butlast kept)
+                             (list (concat (string-trim-right (car (last kept)))
+                                           "…")))
+                   kept)))
+      (mapconcat (lambda (l) (concat "  " l)) kept "\n"))))
+
+(defun consult-hn--annotate (cand)
+  "Annotation for CAND, computed when the candidate was built."
+  (or (get-text-property 0 'consult-hn--annotation cand) ""))
+
+(defvar vertico-count)
+
+(defun consult-hn--scale-vertico-count ()
+  "Shrink the session's `vertico-count' to the usual height budget.
+Vertico sizes its display by candidate count, blind to the screen
+lines annotations add, and every candidate here occupies its own line
+plus up to `consult-hn-max-comment-lines' comment lines.  Dividing the
+count by that factor keeps the session around the height a plain
+vertico session occupies.  A count already buffer-local, e.g. set
+through vertico-multiform, is respected."
+  (when (and (boundp 'vertico-count)
+             (not (local-variable-p 'vertico-count)))
+    (setq-local vertico-count
+                (max 4 (floor vertico-count
+                              (1+ (max 1 consult-hn-max-comment-lines)))))))
+
 (defun consult-hn--plist-keywordize (plist)
   "Keywordize keys in a PLIST."
   (cl-loop for (k v) on plist by #'cddr
@@ -143,19 +199,22 @@ timestamp value must be in utc timezone."
                      (seq-union consult-hn-default-search-params)
                      (seq-filter (lambda (x)
                                    (member (car x) consult-hn--api-allowed-keys)))))
+           ;; deliberately raw: `url-build-query-string' hexifies every
+           ;; value on the way out, so encoding here escapes the escapes
+           ;; and the API is asked for a query nobody wrote
            (_ (unless (string-blank-p (car-safe split))
                 (setf (alist-get 'query params)
-                      (list (url-encode-url (car-safe split))))))
+                      (list (car-safe split)))))
            (params (cl-remove-duplicates params :key #'car)))
       params)))
 
 (defun consult-hn--parse-row-for-lookup (cand-str)
   "Parse displayed candidate string CAND-STR and break into parts."
-  (let* ((pattern (rx (group-n 1 (+? any))                 ; title (non-greedy match)
+  (let* ((pattern (rx (group-n 1 (+? not-newline))         ; title (non-greedy match)
                       (>= 3 space)                         ; separator
                       (group-n 2 (+ (not space)))          ; author
                       (>= 3 space)                         ; separator
-                      (group-n 3 (+? any))                 ; ago
+                      (group-n 3 (+? not-newline))         ; ago
                       (>= 3 space)                         ; separator
                       (group-n 4 (+ (not space)))          ; created-at
                       (optional (>= 3 space)               ; comment
@@ -180,10 +239,16 @@ timestamp value must be in utc timezone."
               ;; this is a trick to make the comments "filterable"
               (created-at (propertize (get-text-property 0 'created-at x)
                                       'invisible t))
-              (comment (if-let* ((cmt (get-text-property 0 'comment x)))
-                           (propertize cmt 'invisible t) "")))
-         (format "%-75s   %-20s   %20s   %s   %s"
-                 row author ago created-at comment))))))
+              (raw-comment (get-text-property 0 'comment x))
+              (comment (if raw-comment (propertize raw-comment 'invisible t) ""))
+              ;; rendered once here rather than per redisplay, which is
+              ;; what `:annotate' would otherwise cost for every
+              ;; visible candidate on every keystroke
+              (annotation (consult-hn--comment-annotation raw-comment)))
+         (propertize (format "%-75s   %-20s   %20s   %s   %s"
+                             row author ago created-at comment)
+                     'consult-hn--annotation
+                     (and annotation (concat "\n" annotation))))))))
 
 (defun consult-hn--async-lookup (cand coll _input _narr)
   "Lookup fn. CAND and COLL standard `consult--read' args for :lookup key."
@@ -233,7 +298,7 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                      ;; Only process if this is still the current search
                      (when (and (buffer-live-p (current-buffer))
                                 (equal input expected-search))
-                       (if-let ((error (plist-get status :error)))
+                       (if-let* ((error (plist-get status :error)))
                            (message "HN fetch error: %s" error)
                          ;; When `url-retrieve` fetches an HTTP resource, it:
                          ;; 1. Creates a buffer with the full HTTP response (headers + body)
@@ -258,10 +323,12 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                                             (equal input expected-search))
                                    (consult-hn--fetch-page-async
                                     input (1+ current-page) async expected-search buffer-callback)))
-                             (json-end-of-file
-                              (print "HN: JSON parse interrupted"))
+                             ;; a killed request buffer truncates the
+                             ;; response mid-parse, which is what
+                             ;; cancelling a search looks like from here
+                             (json-end-of-file nil)
                              (error
-                              (print (concat "HN parse error: " err))))))))
+                              (message "HN parse error: %S" err)))))))
                    nil t)))
       (when (and buffer buffer-callback)
         (funcall buffer-callback buffer)))))
@@ -318,7 +385,12 @@ RESULT is the parsed JSON response from the HN API."
               (comment-text (when-let* ((comment-markup (gethash "comment_text" x)))
                               (with-temp-buffer
                                 (insert comment-markup)
-                                (dom-texts (libxml-parse-html-region)))))
+                                ;; `dom-inner-text' is the sanctioned
+                                ;; replacement but arrived in 31.1 and
+                                ;; joins nodes without a separator,
+                                ;; running words together
+                                (with-suppressed-warnings ((obsolete dom-texts))
+                                  (dom-texts (libxml-parse-html-region))))))
               (title (or (gethash "title" x)
                          (gethash "story_title" x)
                          ""))
@@ -350,32 +422,26 @@ RESULT is the parsed JSON response from the HN API."
   "Consult interface for searching on Hacker News.
 INITIAL is for when it's called programmatically with an input."
   (interactive)
-  (consult--read
-   (consult--async-pipeline
-    (consult--async-throttle)
-    #'consult-hn--async-source
-    (consult--async-transform #'consult-hn--async-transform))
-   :lookup #'consult-hn--async-lookup
-   :state (lambda (action cand)
-            (when-let* ((hn-obj (consult-hn--plist-keywordize
-                                 (text-properties-at 0 (or cand "")))))
-              (pcase action
-                ('preview (apply consult-hn-preview-fn hn-obj))
-                ('return (apply consult-hn-browse-fn hn-obj)))))
-   :prompt "HN Search: "
-   :sort nil
-   :initial (or initial consult-hn-initial-input-string)
-   :history '(:input consult-hn--history)
-   :require-match t
-   :category 'consult-hn-result
-   :annotate (lambda (x)
-               ;; comments shown as annotation
-               (if-let* ((comment (get-text-property 0 'comment x))
-                         (ann-txt (replace-regexp-in-string
-                                   "^" "  " ; prefix every line in the comment with an indent
-                                   (consult-hn--fill-string comment 120 'full))))
-                   (format "\n%s" ann-txt)
-                 ""))))
+  (minibuffer-with-setup-hook #'consult-hn--scale-vertico-count
+    (consult--read
+     (consult--async-pipeline
+      (consult--async-throttle)
+      #'consult-hn--async-source
+      (consult--async-transform #'consult-hn--async-transform))
+     :lookup #'consult-hn--async-lookup
+     :state (lambda (action cand)
+              (when-let* ((hn-obj (consult-hn--plist-keywordize
+                                   (text-properties-at 0 (or cand "")))))
+                (pcase action
+                  ('preview (apply consult-hn-preview-fn hn-obj))
+                  ('return (apply consult-hn-browse-fn hn-obj)))))
+     :prompt "HN Search: "
+     :sort nil
+     :initial (or initial consult-hn-initial-input-string)
+     :history '(:input consult-hn--history)
+     :require-match t
+     :category 'consult-hn-result
+     :annotate #'consult-hn--annotate)))
 
 (defun consult-hn--open (item)
   "Default Embark action for `consult-hn' ITEM."

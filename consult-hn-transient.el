@@ -43,7 +43,7 @@
       ("comment" (push "comment" tags)))
 
     ;; Author
-    (when-let ((author (transient-arg-value "--author=" args)))
+    (when-let* ((author (transient-arg-value "--author=" args)))
       (push (concat "author_" author) tags))
 
     ;; URL matching
@@ -51,7 +51,7 @@
       (push "restrictSearchableAttributes=url" filters))
 
     ;; Time range
-    (when-let ((time (transient-arg-value "--time=" args)))
+    (when-let* ((time (transient-arg-value "--time=" args)))
       (unless (string= time "all")
         (let ((seconds (pcase time
                          ("24h" 86400)
@@ -63,11 +63,11 @@
                 numeric-filters))))
 
     ;; Min points
-    (when-let ((points (transient-arg-value "--points=" args)))
+    (when-let* ((points (transient-arg-value "--points=" args)))
       (push (format "points>%s" points) numeric-filters))
 
     ;; Min comments
-    (when-let ((comments (transient-arg-value "--num_comments=" args)))
+    (when-let* ((comments (transient-arg-value "--num_comments=" args)))
       (push (format "num_comments>%s" comments) numeric-filters))
 
     ;; Combine numeric filters into a single parameter

@@ -63,6 +63,19 @@
     (let ((consult-hn-default-search-params nil))
       (expect (consult-hn--input->params "-- tags=front_page")
               :to-equal '((tags "front_page")))))
+  (it "leaves the query for the query builder to encode"
+    ;; a two-word query used to go out as query=a%2520b and match nothing
+    (let ((consult-hn-default-search-params nil))
+      (expect (consult-hn--input->params "elpaca emacs")
+              :to-equal '((query "elpaca emacs")))
+      (expect (url-build-query-string (consult-hn--input->params "elpaca emacs"))
+              :to-equal "query=elpaca%20emacs")))
+
+  (it "encodes query punctuation exactly once"
+    (let ((consult-hn-default-search-params nil))
+      (expect (url-build-query-string (consult-hn--input->params "c++ & rust"))
+              :not :to-match "%25")))
+
   (it "bogus keys get removed"
     (let ((consult-hn-default-search-params '((hitsPerPage 125))))
       (expect (consult-hn--input->params "foo -- zop=120")
@@ -187,7 +200,108 @@
              (comment-match (string-match "This is a comment" result)))
         (expect comment-match :not :to-be nil)
         (when comment-match
-          (expect (get-text-property comment-match 'invisible result) :to-be t))))))
+          (expect (get-text-property comment-match 'invisible result) :to-be t)))))
+
+  (it "carries the rendered annotation on the candidate"
+    (let ((coll (list (propertize "Title"
+                                  'author "user"
+                                  'ts 1738226435
+                                  'created-at "2025-01-30T10:00:00"
+                                  'comment "This is a comment"))))
+      (spy-on 'float-time :and-return-value 1738226435)
+      (let ((result (car (consult-hn--async-transform coll))))
+        (expect (consult-hn--annotate result) :to-match "This is a comment")
+        (expect (consult-hn--annotate result) :to-match "\\`\n"))))
+
+  (it "annotates comment-free candidates with nothing"
+    (let ((coll (list (propertize "Title"
+                                  'author "user"
+                                  'ts 1738226435
+                                  'created-at "2025-01-30T10:00:00"
+                                  'comment nil))))
+      (spy-on 'float-time :and-return-value 1738226435)
+      (expect (consult-hn--annotate (car (consult-hn--async-transform coll)))
+              :to-equal ""))))
+
+(describe "consult-hn--comment-annotation"
+  (let ((long (mapconcat #'identity (make-list 600 "word") " ")))
+
+    (it "caps at consult-hn-max-comment-lines with an ellipsis"
+      (let ((consult-hn-max-comment-lines 2))
+        (let ((lines (split-string (consult-hn--comment-annotation long) "\n")))
+          (expect (length lines) :to-equal 2)
+          (expect (car (last lines)) :to-match "…\\'"))))
+
+    (it "honours a wider line budget"
+      (let ((consult-hn-max-comment-lines 5))
+        (expect (length (split-string (consult-hn--comment-annotation long) "\n"))
+                :to-equal 5)))
+
+    (it "leaves a short comment uncut"
+      (let ((out (consult-hn--comment-annotation "short one")))
+        (expect out :to-equal "  short one")
+        (expect out :not :to-match "…")))
+
+    (it "indents every shown line"
+      (let ((consult-hn-max-comment-lines 3))
+        (dolist (l (split-string (consult-hn--comment-annotation long) "\n"))
+          (expect l :to-match "\\`  "))))
+
+    (it "fills only what can be shown, regardless of comment size"
+      ;; the guard against the cost growing with comment length: a
+      ;; comment two orders of magnitude longer must not cost more
+      (let* ((huge (mapconcat #'identity (make-list 60000 "word") " "))
+             (t0 (float-time))
+             (_ (consult-hn--comment-annotation huge))
+             (huge-ms (- (float-time) t0))
+             (t1 (float-time))
+             (_ (consult-hn--comment-annotation long))
+             (long-ms (- (float-time) t1)))
+        (expect huge-ms :to-be-less-than (max 0.05 (* 20 long-ms)))))
+
+    (it "returns nil for absent or blank comments"
+      (expect (consult-hn--comment-annotation nil) :to-be nil)
+      (expect (consult-hn--comment-annotation "") :to-be nil)
+      (expect (consult-hn--comment-annotation "   ") :to-be nil))))
+
+(describe "consult-hn--scale-vertico-count"
+  ;; vertico is absent from the unit sandbox, so `vertico-count' starts
+  ;; unbound in every spec here
+  (it "no-ops when vertico is absent"
+    (with-temp-buffer
+      (consult-hn--scale-vertico-count)
+      (expect (local-variable-p 'vertico-count) :to-be nil)))
+
+  (it "divides the count by the candidate's line footprint"
+    (unwind-protect
+        (progn
+          (setq vertico-count 15)
+          (with-temp-buffer
+            (let ((consult-hn-max-comment-lines 2))
+              (consult-hn--scale-vertico-count)
+              (expect (local-variable-p 'vertico-count) :to-be t)
+              (expect vertico-count :to-equal 5))))
+      (makunbound 'vertico-count)))
+
+  (it "keeps a floor of four candidates"
+    (unwind-protect
+        (progn
+          (setq vertico-count 9)
+          (with-temp-buffer
+            (let ((consult-hn-max-comment-lines 3))
+              (consult-hn--scale-vertico-count)
+              (expect vertico-count :to-equal 4))))
+      (makunbound 'vertico-count)))
+
+  (it "respects a count already made buffer-local"
+    (unwind-protect
+        (progn
+          (setq vertico-count 15)
+          (with-temp-buffer
+            (setq-local vertico-count 42)
+            (consult-hn--scale-vertico-count)
+            (expect vertico-count :to-equal 42)))
+      (makunbound 'vertico-count))))
 
 (describe "consult-hn--process-results"
   (it "processes API results correctly"

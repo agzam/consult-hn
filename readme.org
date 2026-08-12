@@ -104,6 +104,8 @@ Or you may want to by default ignore stories that have fewer than a dozen of com
 (setopt consult-hn-initial-input-string "-- numericFilters=num_comments>11")
 #+end_src
 
+Comments are shown under the matching item, wrapped to ~consult-hn-comment-width~ and cut off after ~consult-hn-max-comment-lines~ lines with an ellipsis - open the item to read the whole thing, and note the full text stays searchable regardless of what is shown. The cap is not cosmetic: completion UIs size their display by the number of candidates and are blind to the extra screen lines an annotation occupies, so uncapped comments grow the minibuffer (or the posframe) to dozens of lines. For the same reason ~vertico-count~ is scaled down for the duration of the session, in proportion to the lines each candidate takes; a value you have already made buffer-local, through ~vertico-multiform~ for instance, is left alone.
+
 Additionally, you can customize ~consult-hn-default-search-params~, like so:
 
 #+begin_src emacs-lisp
