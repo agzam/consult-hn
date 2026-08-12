@@ -50,6 +50,21 @@
              do (setq params (plist-put params k v)))
     params))
 
+(defun consult-hn-tests--typed (type &rest overrides)
+  "The default state carrying TYPE, plus any OVERRIDES.
+Emacs 29 looks a keyword up in the lexical environment before treating
+it as self-evaluating, and buttercup evaluates every expectation inside
+an oclosure whose environment binds `:type' to the oclosure's own type
+name.  A literal `:type' written inside `expect' is therefore read as
+`buttercup--thunk' there, and the expectation quietly tests something
+else.  Specs say it through here so they mean what they say."
+  (apply #'consult-hn-tests--params :type type overrides))
+
+(defun consult-hn-tests--type (&optional params)
+  "The type PARAMS carry, or the live state's.
+Reads the keyword outside any expectation; see `consult-hn-tests--typed'."
+  (plist-get (or params consult-hn--params) :type))
+
 (describe "consult-hn--params-render"
   (defvar consult-hn-tests--defaults)
   (before-each
@@ -73,13 +88,13 @@
 
   (it "maps :type to a tag, and `all' to no tag"
     (expect (alist-get 'tags (consult-hn--params-render
-                              (consult-hn-tests--params :type 'story)))
+                              (consult-hn-tests--typed 'story)))
             :to-equal '("story"))
     (expect (alist-get 'tags (consult-hn--params-render
-                              (consult-hn-tests--params :type 'comment)))
+                              (consult-hn-tests--typed 'comment)))
             :to-equal '("comment"))
     (expect (alist-get 'tags (consult-hn--params-render
-                              (consult-hn-tests--params :type 'all)))
+                              (consult-hn-tests--typed 'all)))
             :to-be nil))
 
   (it "maps :author to an author tag"
@@ -141,8 +156,8 @@
   ;; combinations: the joining is where a naive mapping falls apart
   (it "joins tags with a comma"
     (expect (alist-get 'tags (consult-hn--params-render
-                              (consult-hn-tests--params
-                               :type 'comment :author "pg" :front-page t)))
+                              (consult-hn-tests--typed
+                               'comment :author "pg" :front-page t)))
             :to-equal '("comment,author_pg,front_page")))
 
   (it "joins every numeric condition into one parameter"
@@ -155,8 +170,8 @@
 
   (it "renders a fully specified state"
     (expect (consult-hn--params-render
-             (consult-hn-tests--params
-              :query "emacs lisp" :type 'story :author "pg" :points 100
+             (consult-hn-tests--typed
+              'story :query "emacs lisp" :author "pg" :points 100
               :comments 25 :range 'week :front-page t :url-match t
               :sort 'relevance)
              2)
@@ -177,7 +192,7 @@
   (it "lets the state win over user defaults"
     (setq consult-hn-default-search-params '((tags "comment")))
     (expect (alist-get 'tags (consult-hn--params-render
-                              (consult-hn-tests--params :type 'story)))
+                              (consult-hn-tests--typed 'story)))
             :to-equal '("story")))
 
   (it "drops user defaults the API would not accept"
@@ -236,7 +251,7 @@
               :to-equal (format " [%s]" (car (last row))))))
 
   (it "says nothing about what is left at its default"
-    (expect (consult-hn--params-chips (consult-hn-tests--params :type 'all))
+    (expect (consult-hn--params-chips (consult-hn-tests--typed 'all))
             :to-equal "")
     (expect (consult-hn--params-chips (consult-hn-tests--params :range 'all))
             :to-equal "")
@@ -245,8 +260,8 @@
 
   (it "renders a full house in the order of the parameter model"
     (expect (consult-hn--params-chips
-             (consult-hn-tests--params
-              :query "emacs lisp" :type 'story :author "pg" :points 100
+             (consult-hn-tests--typed
+              'story :query "emacs lisp" :author "pg" :points 100
               :comments 25 :range 'week :front-page t :url-match t
               :sort 'relevance))
             :to-equal " [story · pg · >100p · >25c · 7d · front · url · rel]"))
@@ -254,7 +269,7 @@
   (it "carries a face, so the chips read as prompt decoration"
     (expect (get-text-property
              1 'face (consult-hn--params-chips
-                      (consult-hn-tests--params :type 'story)))
+                      (consult-hn-tests--typed 'story)))
             :to-be 'consult-narrow-indicator)))
 
 (describe "consult-hn--api-url"
@@ -594,10 +609,10 @@
 
   (it "cycle a parameter and search again on the spot"
     (consult-hn-session-type)
-    (expect (plist-get consult-hn--params :type) :to-equal 'story)
+    (expect (consult-hn-tests--type) :to-equal 'story)
     (expect consult-hn-tests--restarts :to-equal 1)
     (consult-hn-session-type)
-    (expect (plist-get consult-hn--params :type) :to-equal 'comment)
+    (expect (consult-hn-tests--type) :to-equal 'comment)
     (expect consult-hn-tests--restarts :to-equal 2))
 
   (it "toggle a flag"
@@ -673,7 +688,9 @@
 
   (it "sends a keyword parameter to the endpoint"
     (consult-hn "emacs" :type 'story :points 100 :author "pg")
-    (let ((url (plist-get consult-hn-tests--read-args :url)))
+    ;; decoded, because Emacs 29 hexifies the comma joining tags and
+    ;; later versions leave it alone; either reaches the endpoint the same
+    (let ((url (url-unhex-string (plist-get consult-hn-tests--read-args :url))))
       (expect url :to-match "tags=story,author_pg")
       (expect url :to-match "points")))
 
@@ -744,8 +761,8 @@
 
   (it "spells every parameter of the model as an argument"
     (expect (consult-hn-transient--args
-             (consult-hn-tests--params
-              :query "emacs lisp" :type 'story :author "pg" :points 100
+             (consult-hn-tests--typed
+              'story :query "emacs lisp" :author "pg" :points 100
               :comments 25 :range 'week :front-page t :url-match t
               :sort 'relevance))
             :to-equal '("--query=emacs lisp" "--type=story" "--author=pg"
@@ -827,7 +844,7 @@
     (spy-on 'transient-args :and-return-value '("--query=emacs" "--type=story"))
     (spy-on 'consult-hn)
     (consult-hn-transient-action)
-    (expect (plist-get consult-hn--params :type) :to-equal 'story)
+    (expect (consult-hn-tests--type) :to-equal 'story)
     (expect (plist-get consult-hn--params :query) :to-equal "emacs")
     ;; the session takes the query from the state it was just handed
     (expect 'consult-hn :to-have-been-called-with)))
