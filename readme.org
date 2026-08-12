@@ -30,44 +30,57 @@ You can install the package through your favorite Emacs package manager, it's on
 or you can recipe-it from GitHub directly, e.g., for Doom:
 
 #+begin_src elisp
-(package! hnreader :recipe (:host github :repo "agzam/consult-hn"))
+(package! consult-hn :recipe (:host github :repo "agzam/consult-hn"))
 #+end_src
 
-Then you can just run ~(consult-hn-transient)~ — UX-convenient option, or (more directly) — ~(consult-hn)~ command.
+Then run ~consult-hn~. Type a query and it searches both comments and stories, newest first by default.
 
-Type a query and it will search for both comments and stories, by default sorting them with the latest first.
+The prompt opens with a =#= already in it - that is Consult's doing, and it is what separates the part of the input that reaches Hacker News from the part that filters what came back. Type the query after it.
 
-The format of the queries is the following: ~#SEARCH-TERM -- ADDITIONAL-PARAMETERS~
+Everything else about a search - stories or comments, an author, a points floor, how far back to reach - is a key away from inside the session, described below. ~consult-hn-transient~ opens a menu over the same set for anyone who would rather compose a search before running it.
 
-Parameters and the search term are always separated by =--=
+[[https://www.youtube.com/watch?v=ud3Gmxg5UZg][Here's a YouTube video]] demoing it (7 minutes). It predates the parameter keys and shows the older ~--~ input syntax, which still works but is no longer the way in.
 
-You can omit either parameters or the search-term. Parameters are key/value pairs of format: ~KEY=VALUE~
+** Shaping a search without leaving it
 
-You can use keys listed in [[https://hn.algolia.com/api][the official API documentation]]
+These keys work while the session is open. Each one re-runs the search at once, keeping your input, and what is set shows up in the prompt:
 
-[[https://www.youtube.com/watch?v=ud3Gmxg5UZg][Here's a YouTube video]] demoing it (7 minutes)
+| Key     | Does                                                  |
+|---------+-------------------------------------------------------|
+| ~C-c t~ | cycle the type: everything, stories, comments         |
+| ~C-c a~ | an author, empty answer for anyone                    |
+| ~C-c p~ | a points floor, empty answer for none                 |
+| ~C-c c~ | a comment-count floor, empty answer for none          |
+| ~C-c r~ | cycle how far back: all time, 24h, week, month, year  |
+| ~C-c f~ | toggle the front page                                 |
+| ~C-c u~ | toggle matching URLs rather than text                 |
+| ~C-c s~ | cycle the order: default, newest first, most relevant |
 
-** Examples:
+So ~C-c t~ twice and ~C-c a~ answered with =pg= leaves the prompt reading ~HN Search: [comment · pg]~ and the results are Paul Graham's comments. There is no reset key and no need of one: cycling comes back around to the default, an empty answer clears an author or a floor, and the prompt says what is still in force.
 
-~#Emacs~ - will search for everything that contains "Emacs"
+Whatever you shape a session into is what the next one starts as, which is what makes a one-key front page (~C-c f~) worth having.
 
-~#Emacs -- tags=story~ - articles with Emacs in the title
+** Examples
 
-~#"I hate Emacs" -- tags=comment~ - comments matching the query
+~Emacs~ - everything that contains "Emacs"
 
-~#-- tags=story,author_pg~ - all the stories posted by Paul Graham
+~Emacs~ then ~C-c t~ - articles with Emacs in the title
 
-~#-- tags=comment,author_pg~ - all the comments of Paul Graham
+~"I hate Emacs"~ then ~C-c t~ twice - comments matching the query
 
-~#clojure -- restrictSearchableAttributes=url~ - all stories containing matching URLs
+~C-c a~ answered with =pg=, on an empty query - everything Paul Graham posted
 
-*** Narrowing
+A URL, pasted, then ~C-c u~ - the discussions of that link. The transient turns URL matching on by itself when what you typed is a URL.
 
-Consult has narrowing feature, that's why the prompt for consult-hn, typically starts with that hash-mark. So you can use it to narrow your results. e.g.
+*** Narrowing what came back
 
-~#Emacs#Vim~ - finds everything on HN that contains "Emacs", but then narrows the results to filter all the items that also contain ~Vim~
+A second =#= filters the results already fetched, instantly and without asking Hacker News anything:
 
-~#"I love Emacs" -- tags=comment #hate Vim~ - fetch some comments and narrow
+~#Emacs#Vim~ - fetch everything containing "Emacs", then keep only the items that also mention "Vim"
+
+That is worth knowing because a broad query can pull a thousand items in, and sifting them locally costs nothing, while editing the query itself sends you back to the network.
+
+Queries containing =#= are the one awkward case, since =#= is the separator. Consult takes the separator from whatever punctuation the input starts with, so replace the leading =#= with something the query does not contain: ~/C#/~ searches for =C#= and narrows on whatever follows the second =/=.
 
 ** Customization
 
@@ -76,6 +89,17 @@ Once you find HN items you have multiple choices:
 - preview (without closing the Consult buffer)
 - browse (close the search buffer, open the item)
 - push all the found items into Embark-Collect buffer. See [[https://github.com/oantolin/embark][Embark's]] documentation for that.
+
+*** Embark
+
+Results are of the ~consult-hn-result~ category, and ~embark-act~ on one offers:
+
+| ~b b~ | open it with ~consult-hn-browse-fn~, the same thing =RET= does |
+| ~b o~ | open it in a web browser                                       |
+| ~b e~ | open it in eww                                                 |
+| ~w~   | copy its Hacker News url                                       |
+
+The item is the same in every case - the Hacker News object the search returned, not the story it links to; only the reader differs. Bind your own on ~consult-hn-embark-map~.
 
  You can customize ~consult-hn-browse-fn~ var, setting it to a function, here's for example how to make it always open selected item in the browser.
 
@@ -96,13 +120,27 @@ If you're using [[https://github.com/thanhvg/emacs-hnreader][hnreader]], you may
 (setopt consult-hn-browse-fn #'consult-hn-reader
 #+end_src
 
-You can set ~consult-hn-initial-input-string~. For example, if you want to always see stories from the HN front page (whenever you open consult-hn), you can do ~(setq consult-hn-initial-input-string "-- tags=front_page")~. /There's however an important caveat I should mention. HN uses some proprietary algorithm to sort those stories, something that API doesn't expose, so the sorted order of those stories will not be exactly as on the HN Front Page./
-
-Or you may want to by default ignore stories that have fewer than a dozen of comments:
+~consult-hn~ takes the same parameters as arguments, so a keybinding can be a whole search:
 
 #+begin_src emacs-lisp
-(setopt consult-hn-initial-input-string "-- numericFilters=num_comments>11")
+(defun my/hn-front-page ()
+  "The front page, one key away."
+  (interactive)
+  (consult-hn nil :front-page t))
+
+(defun my/hn-emacs-stories ()
+  "Well-received Emacs stories."
+  (interactive)
+  (consult-hn "emacs" :type 'story :points 100))
 #+end_src
+
+The keywords are ~:type~ (~all~, ~story~, ~comment~), ~:author~, ~:points~, ~:comments~, ~:range~ (~all~, ~24h~, ~week~, ~month~, ~year~), ~:front-page~, ~:url-match~ and ~:sort~ (~nil~, ~date~, ~relevance~). They hold for that call alone and leave the state the interactive command carries between sessions alone.
+
+/A caveat about the front page: HN orders it with a proprietary algorithm the API does not expose, so what you get will not be in exactly the order the site shows./
+
+~consult-hn-initial-input-string~ is obsolete, replaced by the arguments above. It still seeds a session if you have it set.
+
+Comments are shown under the matching item, wrapped to ~consult-hn-comment-width~ and cut off after ~consult-hn-max-comment-lines~ lines with an ellipsis - open the item to read the whole thing, and note the full text stays searchable regardless of what is shown. The cap is not cosmetic: completion UIs size their display by the number of candidates and are blind to the extra screen lines an annotation occupies, so uncapped comments grow the minibuffer (or the posframe) to dozens of lines. For the same reason ~vertico-count~ is scaled down for the duration of the session, in proportion to the lines each candidate takes; a value you have already made buffer-local, through ~vertico-multiform~ for instance, is left alone.
 
 Additionally, you can customize ~consult-hn-default-search-params~, like so:
 
@@ -110,8 +148,20 @@ Additionally, you can customize ~consult-hn-default-search-params~, like so:
 (setopt consult-hn-default-search-params '((numericFilters "num_comments>11")))
 #+end_src
 
-Be careful though - these params quietly get translated into the query, and won't even show up in the UI, for changing them, you will have to explicitly override them in the prompt. So, for the example above, unless you explicitly state: ~"-- numericFilters=num_comments>0"~, stories with fewer than 12 comments *always* be ignored. It might get confusing, so I suggest leaving this var unchanged.
+Be careful though - these reach the endpoint on every search and show up nowhere in the prompt, so for the example above stories with fewer than 12 comments are silently missing and nothing on screen says why. Anything the session sets outranks them, and it does so wholesale rather than piecemeal: one ~C-c c~ replaces that ~numericFilters~ default entirely, floors and date ranges together. A keybinding passing ~:comments 11~ does the same job visibly, so I suggest leaving this var unchanged. The keys it accepts are the ones in [[https://hn.algolia.com/api][the official API documentation]].
 
 ** Miscellaneous considerations
 
-The command, once receives a query, starts pulling the results exhaustively, until it fetches all the pages. Be mindful that you may encounter rate limiting due to Algolia API's daily usage restrictions. To avoid this, try using more specific search terms and consider dropping into Embark Collect buffer to gather results sooner, rather than waiting for complete retrieval of all pages. I've been testing it pretty actively, and so far have not hit the rate-limiter.
+A search pages results in until it runs out or hits ~consult-hn-max-pages~, ten by default, asking for ~consult-hn-hits-per-page~ items at a time, a hundred by default. A thousand items is more than anybody scrolls through, and the endpoint hands over a large page as readily as a small one, so a broad query costs ten requests where twenty-per-page would have cost fifty. Lower ~consult-hn-hits-per-page~ on a slow link, and raise ~consult-hn-max-pages~ if you really do want everything. Algolia's API has daily usage limits; specific search terms and an early jump into an Embark Collect buffer are the way to stay clear of them.
+
+* Changelog
+
+** 1.1.0
+
+- Search parameters have left the input line. Typing ~QUERY -- key=value~ still works, so a keybinding you already have keeps doing what it did, but it is no longer how the package is used or documented: type the query, press ~C-c~ and a letter to shape the search from inside the session, and read the prompt to see what is set. ~consult-hn-transient~ sets the same parameters instead of building an input string.
+- Paging is bounded. At most ~consult-hn-max-pages~ (10) pages of ~consult-hn-hits-per-page~ (100), where the package used to follow the endpoint's page count wherever it led, twenty items at a time. A broad search now costs ten requests instead of fifty for the same thousand items, and a very broad one stops instead of grinding.
+- Comments under a candidate are capped at ~consult-hn-max-comment-lines~ (2) with an ellipsis, and ~vertico-count~ is scaled for the session, so one long comment no longer pushes the minibuffer to dozens of lines.
+- ~consult-hn~ takes a query and parameters from Lisp, e.g. ~(consult-hn "emacs" :type 'story :points 100)~.
+- ~consult-hn-initial-input-string~ is obsolete. Pass the arguments instead; it still works meanwhile.
+- Embark does more than exit the session: ~b b~ opens the item with ~consult-hn-browse-fn~, ~b o~ in a web browser, ~b e~ in eww, and ~w~ copies its Hacker News url.
+- Fixes: a superseded search can no longer land its pages in the results, items the endpoint repeats across pages are dropped, the Embark registration no longer depends on Embark having loaded first, and the package byte-compiles clean on Emacs 31.

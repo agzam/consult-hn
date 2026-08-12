@@ -19,5 +19,8 @@ jobs:
       - name: Install dependend packages
         run: make deps
 
+      - name: Check byte-compilation
+        run: make check-compile
+
       - name: Run tests
         run: make test
