@@ -4,5 +4,6 @@ tmp/
 
 .elpa/
 .elpa-e2e/
+.sandbox/
 *.elc
 test/consult-hn-e2e-results.txt
