@@ -39,6 +39,193 @@
     (expect (consult-hn--fill-string "test" 10 'center)
             :to-match "   test")))
 
+(defconst consult-hn-tests--now 1738226435
+  "Fixed clock for the specs that render a time range.")
+
+(defun consult-hn-tests--params (&rest overrides)
+  "The default parameter state with OVERRIDES applied."
+  (let ((params (copy-sequence consult-hn--params)))
+    (cl-loop for (k v) on overrides by #'cddr
+             do (setq params (plist-put params k v)))
+    params))
+
+(describe "consult-hn--params-render"
+  (defvar consult-hn-tests--defaults)
+  (before-each
+    (spy-on 'time-convert :and-return-value consult-hn-tests--now)
+    (setq consult-hn-tests--defaults consult-hn-default-search-params
+          consult-hn-default-search-params nil))
+  (after-each
+    (setq consult-hn-default-search-params consult-hn-tests--defaults))
+
+  (it "renders nothing but the page size for an untouched state"
+    (expect (consult-hn--params-render (consult-hn-tests--params))
+            :to-equal '((hitsPerPage 100))))
+
+  (it "passes the query through raw, for the query builder to encode"
+    (expect (consult-hn--params-render (consult-hn-tests--params :query "c++ & rust"))
+            :to-equal '((query "c++ & rust") (hitsPerPage 100))))
+
+  (it "drops a blank query"
+    (expect (consult-hn--params-render (consult-hn-tests--params :query "  "))
+            :to-equal '((hitsPerPage 100))))
+
+  (it "maps :type to a tag, and `all' to no tag"
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params :type 'story)))
+            :to-equal '("story"))
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params :type 'comment)))
+            :to-equal '("comment"))
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params :type 'all)))
+            :to-be nil))
+
+  (it "maps :author to an author tag"
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params :author "pg")))
+            :to-equal '("author_pg")))
+
+  (it "maps :front-page to the front_page tag"
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params :front-page t)))
+            :to-equal '("front_page")))
+
+  (it "maps :points to a numeric filter"
+    (expect (alist-get 'numericFilters
+                       (consult-hn--params-render
+                        (consult-hn-tests--params :points 100)))
+            :to-equal '("points>100")))
+
+  (it "maps :comments to a numeric filter"
+    (expect (alist-get 'numericFilters
+                       (consult-hn--params-render
+                        (consult-hn-tests--params :comments 25)))
+            :to-equal '("num_comments>25")))
+
+  (it "maps every :range to a cutoff, and `all' to none"
+    (dolist (row '((24h . 86400) (week . 604800)
+                   (month . 2592000) (year . 31536000)))
+      (expect (alist-get 'numericFilters
+                         (consult-hn--params-render
+                          (consult-hn-tests--params :range (car row))))
+              :to-equal (list (format "created_at_i>%d"
+                                      (- consult-hn-tests--now (cdr row))))))
+    (expect (alist-get 'numericFilters
+                       (consult-hn--params-render
+                        (consult-hn-tests--params :range 'all)))
+            :to-be nil))
+
+  (it "maps :url-match to the searchable attribute restriction"
+    (expect (alist-get 'restrictSearchableAttributes
+                       (consult-hn--params-render
+                        (consult-hn-tests--params :url-match t)))
+            :to-equal '("url")))
+
+  (it "leaves :sort to the endpoint, never to the parameters"
+    (expect (consult-hn--params-render (consult-hn-tests--params :sort 'relevance))
+            :to-equal '((hitsPerPage 100))))
+
+  (it "appends the page number only when one is asked for"
+    (expect (alist-get 'page (consult-hn--params-render
+                              (consult-hn-tests--params :query "foo")))
+            :to-be nil)
+    (expect (alist-get 'page (consult-hn--params-render
+                              (consult-hn-tests--params :query "foo") 0))
+            :to-equal '(0))
+    (expect (alist-get 'page (consult-hn--params-render
+                              (consult-hn-tests--params :query "foo") 3))
+            :to-equal '(3)))
+
+  ;; combinations: the joining is where a naive mapping falls apart
+  (it "joins tags with a comma"
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params
+                               :type 'comment :author "pg" :front-page t)))
+            :to-equal '("comment,author_pg,front_page")))
+
+  (it "joins every numeric condition into one parameter"
+    (expect (alist-get 'numericFilters
+                       (consult-hn--params-render
+                        (consult-hn-tests--params
+                         :points 100 :comments 25 :range '24h)))
+            :to-equal (list (format "points>100,num_comments>25,created_at_i>%d"
+                                    (- consult-hn-tests--now 86400)))))
+
+  (it "renders a fully specified state"
+    (expect (consult-hn--params-render
+             (consult-hn-tests--params
+              :query "emacs lisp" :type 'story :author "pg" :points 100
+              :comments 25 :range 'week :front-page t :url-match t
+              :sort 'relevance)
+             2)
+            :to-equal
+            `((query "emacs lisp")
+              (tags "story,author_pg,front_page")
+              (numericFilters ,(format "points>100,num_comments>25,created_at_i>%d"
+                                       (- consult-hn-tests--now 604800)))
+              (restrictSearchableAttributes "url")
+              (hitsPerPage 100)
+              (page 2))))
+
+  (it "lets user defaults fill what the state leaves unset"
+    (setq consult-hn-default-search-params '((typoTolerance false) (hitsPerPage 25)))
+    (expect (consult-hn--params-render (consult-hn-tests--params :query "foo"))
+            :to-equal '((query "foo") (typoTolerance false) (hitsPerPage 25))))
+
+  (it "lets the state win over user defaults"
+    (setq consult-hn-default-search-params '((tags "comment")))
+    (expect (alist-get 'tags (consult-hn--params-render
+                              (consult-hn-tests--params :type 'story)))
+            :to-equal '("story")))
+
+  (it "drops user defaults the API would not accept"
+    (setq consult-hn-default-search-params '((zop "120")))
+    (expect (consult-hn--params-render (consult-hn-tests--params))
+            :to-equal '((hitsPerPage 100)))))
+
+(describe "consult-hn--params-endpoint"
+  (it "sorts by date by default"
+    (expect (consult-hn--params-endpoint (consult-hn-tests--params :query "foo"))
+            :to-equal "search_by_date"))
+
+  (it "ranks the front page by relevance, as it always has"
+    (expect (consult-hn--params-endpoint (consult-hn-tests--params :front-page t))
+            :to-equal "search"))
+
+  (it "honours an explicit :sort over the front-page inference"
+    (expect (consult-hn--params-endpoint
+             (consult-hn-tests--params :front-page t :sort 'date))
+            :to-equal "search_by_date")
+    (expect (consult-hn--params-endpoint (consult-hn-tests--params :sort 'relevance))
+            :to-equal "search"))
+
+  (it "infers from the parameters actually going out"
+    ;; the legacy input syntax reaches the endpoint through tags alone
+    (expect (consult-hn--params-endpoint (consult-hn-tests--params)
+                                         '((tags "story,front_page")))
+            :to-equal "search")))
+
+(describe "consult-hn--api-url"
+  (it "encodes a multi-word query exactly once"
+    ;; a two-word query used to go out as query=a%2520b and match nothing
+    (let* ((params (consult-hn-tests--params :query "elpaca emacs"))
+           (url (consult-hn--api-url params (consult-hn--params-render params 0))))
+      (expect url :to-match "query=elpaca%20emacs")
+      (expect url :not :to-match "%25")))
+
+  (it "encodes query punctuation exactly once"
+    (let* ((params (consult-hn-tests--params :query "c++ & rust"))
+           (url (consult-hn--api-url params (consult-hn--params-render params))))
+      (expect url :not :to-match "%25")))
+
+  (it "puts the state on the endpoint the state asks for"
+    (let* ((params (consult-hn-tests--params :query "foo" :front-page t))
+           (url (consult-hn--api-url params (consult-hn--params-render params 1))))
+      (expect url :to-match "/api/v1/search\\?")
+      (expect url :to-match "tags=front_page")
+      (expect url :to-match "page=1"))))
+
 (describe "consult-hn--input->params"
   (it "handles nil and blank strings"
     (expect (consult-hn--input->params nil) :to-equal nil)
@@ -80,6 +267,193 @@
     (let ((consult-hn-default-search-params '((hitsPerPage 125))))
       (expect (consult-hn--input->params "foo -- zop=120")
               :to-equal '((query "foo") (hitsPerPage 125))))))
+
+(describe "consult-hn--request-url"
+  (it "sends the query from the input under the current state"
+    (let ((consult-hn--params (consult-hn-tests--params :type 'story)))
+      (expect (consult-hn--request-url "elpaca emacs" 0)
+              :to-match "query=elpaca%20emacs")
+      (expect (consult-hn--request-url "elpaca emacs" 0) :to-match "tags=story")
+      (expect (consult-hn--request-url "elpaca emacs" 0) :to-match "page=0")))
+
+  (it "encodes a multi-word query exactly once"
+    (expect (consult-hn--request-url "elpaca emacs" 0) :not :to-match "%25"))
+
+  (it "layers the legacy suffix over the state"
+    (let ((consult-hn--params (consult-hn-tests--params :type 'story)))
+      ;; what the caller spelled out by hand replaces what the state says
+      (expect (consult-hn--request-url "foo -- tags=comment" 0)
+              :to-match "tags=comment")
+      (expect (consult-hn--request-url "foo -- tags=comment" 0)
+              :not :to-match "tags=story")))
+
+  (it "keeps the query out of the legacy suffix"
+    (expect (consult-hn--request-url "foo -- tags=story" 0) :to-match "query=foo"))
+
+  (it "keeps the front_page endpoint inference for a legacy tag"
+    ;; the state knows nothing of front-page here; only the tag says so
+    (expect (consult-hn--request-url "foo -- tags=front_page" 0)
+            :to-match "/api/v1/search\\?")
+    (expect (consult-hn--request-url "foo -- tags=story" 0)
+            :to-match "/api/v1/search_by_date\\?"))
+
+  (it "leaves the parameter state alone"
+    (let ((consult-hn--params (consult-hn-tests--params :type 'story)))
+      (consult-hn--request-url "foo" 0)
+      (expect (plist-get consult-hn--params :query) :to-be nil))))
+
+(defun consult-hn-tests--payload (page nb-pages ids)
+  "JSON body for PAGE of NB-PAGES carrying a hit per objectID in IDS."
+  (json-encode
+   (list (cons "hits"
+               (mapcar (lambda (id)
+                         (list (cons "objectID" id)
+                               (cons "story_id" id)
+                               (cons "title" (format "Title %s" id))
+                               (cons "author" "someone")
+                               (cons "created_at" "2025-01-30T10:00:00")
+                               (cons "created_at_i" 1738226435)))
+                       ids))
+         (cons "nbPages" nb-pages)
+         (cons "page" page))))
+
+(defun consult-hn-tests--deliver (callback json)
+  "Run CALLBACK in a buffer shaped like a finished response carrying JSON."
+  (let ((buf (generate-new-buffer " *consult-hn-test-response*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "HTTP/1.1 200 OK\nContent-Type: application/json\n\n")
+          (setq-local url-http-end-of-headers (copy-marker (point)))
+          (insert json)
+          (funcall callback nil))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(describe "consult-hn--fetch-page-async"
+  ;; the seam is `url-retrieve': the spy records the URL and hands back
+  ;; the callback, which the spec then feeds a response by hand
+  (defvar consult-hn-tests--urls)
+  (defvar consult-hn-tests--callbacks)
+  (before-each
+    (setq consult-hn-tests--urls nil
+          consult-hn-tests--callbacks nil
+          consult-hn--seen (make-hash-table :test 'equal))
+    (spy-on 'url-retrieve :and-call-fake
+            (lambda (url callback &rest _)
+              (push url consult-hn-tests--urls)
+              (push callback consult-hn-tests--callbacks)
+              nil)))
+
+  (it "chains to the next page while the endpoint has more"
+    (let ((consult-hn-max-pages 10)
+          (delivered nil))
+      (consult-hn--fetch-page-async "emacs" 0 (lambda (rows) (push rows delivered))
+                                    consult-hn--generation)
+      (consult-hn-tests--deliver (car consult-hn-tests--callbacks)
+                                 (consult-hn-tests--payload 0 3 '("1" "2")))
+      (expect (length delivered) :to-equal 1)
+      (expect (length consult-hn-tests--urls) :to-equal 2)
+      (expect (car consult-hn-tests--urls) :to-match "page=1")))
+
+  (it "stops the chain at the page cap, whatever the endpoint reports"
+    (let ((consult-hn-max-pages 2))
+      (consult-hn--fetch-page-async "emacs" 0 #'ignore consult-hn--generation)
+      ;; the endpoint offers 50 pages; two is all this chain may cost
+      (consult-hn-tests--deliver (car consult-hn-tests--callbacks)
+                                 (consult-hn-tests--payload 0 50 '("1")))
+      (expect (length consult-hn-tests--urls) :to-equal 2)
+      (consult-hn-tests--deliver (car consult-hn-tests--callbacks)
+                                 (consult-hn-tests--payload 1 50 '("2")))
+      (expect (length consult-hn-tests--urls) :to-equal 2)))
+
+  (it "stops when the endpoint runs out of pages before the cap"
+    (let ((consult-hn-max-pages 10))
+      (consult-hn--fetch-page-async "emacs" 0 #'ignore consult-hn--generation)
+      (consult-hn-tests--deliver (car consult-hn-tests--callbacks)
+                                 (consult-hn-tests--payload 0 1 '("1")))
+      (expect (length consult-hn-tests--urls) :to-equal 1)))
+
+  (it "asks for a full page of hits"
+    (consult-hn--fetch-page-async "emacs" 0 #'ignore consult-hn--generation)
+    (expect (car consult-hn-tests--urls)
+            :to-match (format "hitsPerPage=%d" consult-hn-hits-per-page)))
+
+  (it "drops a page whose search has been superseded"
+    (let ((consult-hn--generation 7)
+          (delivered nil))
+      (consult-hn--fetch-page-async "emacs" 0 (lambda (rows) (push rows delivered))
+                                    consult-hn--generation)
+      ;; the session moved on while this page was in the air
+      (setq consult-hn--generation 8)
+      (consult-hn-tests--deliver (car consult-hn-tests--callbacks)
+                                 (consult-hn-tests--payload 0 3 '("1" "2")))
+      (expect delivered :to-be nil)
+      ;; and it must not drag the rest of its chain along either
+      (expect (length consult-hn-tests--urls) :to-equal 1)))
+
+  (it "delivers a page whose search is still current"
+    (let ((consult-hn--generation 7)
+          (delivered nil))
+      (consult-hn--fetch-page-async "emacs" 0 (lambda (rows) (push rows delivered))
+                                    consult-hn--generation)
+      (consult-hn-tests--deliver (car consult-hn-tests--callbacks)
+                                 (consult-hn-tests--payload 0 3 '("1" "2")))
+      (expect (length (car delivered)) :to-equal 2))))
+
+(describe "consult-hn--dedup"
+  (before-each
+    (setq consult-hn--seen (make-hash-table :test 'equal)))
+
+  (it "drops an item this search has already delivered"
+    (let ((rows (list (propertize "a" 'object-id "1")
+                      (propertize "b" 'object-id "2"))))
+      (expect (length (consult-hn--dedup rows)) :to-equal 2)
+      ;; the same item again, on a later page of the same chain
+      (expect (consult-hn--dedup (list (propertize "a" 'object-id "1")))
+              :to-equal nil)))
+
+  (it "drops a repeat inside a single page"
+    (expect (length (consult-hn--dedup (list (propertize "a" 'object-id "1")
+                                             (propertize "a" 'object-id "1"))))
+            :to-equal 1))
+
+  (it "keeps an item nothing identifies"
+    (expect (length (consult-hn--dedup (list "no properties here")))
+            :to-equal 1))
+
+  (it "forgets everything once a new search starts"
+    (spy-on 'url-retrieve :and-return-value nil)
+    (consult-hn--dedup (list (propertize "a" 'object-id "1")))
+    (funcall (consult-hn--async-source #'ignore) "emacs")
+    (expect (length (consult-hn--dedup (list (propertize "a" 'object-id "1"))))
+            :to-equal 1)))
+
+(describe "consult-hn--async-source"
+  (it "retires the pages in flight on every restart"
+    (spy-on 'url-retrieve :and-return-value nil)
+    (let* ((consult-hn--generation 0)
+           (source (consult-hn--async-source #'ignore))
+           (first (progn (funcall source "emacs") consult-hn--generation)))
+      (funcall source "emacs lisp")
+      (expect consult-hn--generation :not :to-equal first)))
+
+  (it "retires the pages in flight when the session ends"
+    (spy-on 'url-retrieve :and-return-value nil)
+    (let* ((consult-hn--generation 0)
+           (source (consult-hn--async-source #'ignore)))
+      (funcall source "emacs")
+      (let ((live consult-hn--generation))
+        (funcall source 'destroy)
+        (expect consult-hn--generation :not :to-equal live))))
+
+  (it "kills the request buffers it knows about"
+    (let* ((consult-hn--generation 0)
+           (buffer (generate-new-buffer " *consult-hn-test-request*"))
+           (source (consult-hn--async-source #'ignore)))
+      (spy-on 'url-retrieve :and-return-value buffer)
+      (funcall source "emacs")
+      (expect (buffer-live-p buffer) :to-be t)
+      (funcall source 'destroy)
+      (expect (buffer-live-p buffer) :to-be nil))))
 
 (describe "consult-hn--time-ago"
   ;; the float-time spy works this way: you add some time to a given
@@ -336,6 +710,7 @@
         
         ;; Check first item (story)
         (let ((item1 (car processed)))
+          (expect (get-text-property 0 'object-id item1) :to-equal "12345")
           (expect (get-text-property 0 'title item1) :to-equal "Test Title")
           (expect (get-text-property 0 'author item1) :to-equal "test_user")
           (expect (get-text-property 0 'story-url item1) :to-equal "https://example.com")

@@ -84,11 +84,15 @@ D12. The `--` syntax keeps being parsed when present, is removed from the docume
 | range | `24h`, `week`, `month`, `year`, `all` | `numericFilters=created_at_i>T` | `all` | `24h`, `7d`, `30d`, `1y` |
 | front-page | boolean | `tags=front_page` | nil | `front` |
 | url-match | boolean | `restrictSearchableAttributes=url` | nil | `url` |
-| sort | `date`, `relevance` | endpoint `search_by_date` or `search` | `date` | `rel` when relevance |
+| sort | nil, `date`, `relevance` | endpoint `search_by_date` or `search` | nil, meaning infer | `rel` when relevance |
 
 Two notes on fidelity to the current behaviour. Sort is currently inferred from the presence of `front_page` in tags, which conflates two independent things; it becomes an explicit parameter whose default reproduces today's behaviour. Multiple `numericFilters` are joined with a comma, as the transient already does.
 
+Settled while building Phase 1, since the two above are in tension. `:sort` nil means infer, and the inference reads the tags actually going out rather than the state, so the legacy `tags=front_page` reaches the relevance endpoint exactly as it does today. `date` and `relevance` are explicit and override the inference. Rendering order is the order of this table: tags are joined `type,author,front_page` and numeric conditions `points,num_comments,created_at_i`. The endpoint treats both as unordered sets, so the order is for legibility and for specs that can compare whole strings.
+
 `hitsPerPage` and `page` are internal and never user-facing parameters, though `hitsPerPage` gets a defcustom for people on slow links.
+
+Parameters are layered, and the ladder is: the legacy ` -- key=value` suffix beats the state object, which beats `consult-hn-default-search-params`, which beats the page size this package would otherwise ask for. The first rung is what keeps a hand-written keybinding authoritative; the last is what keeps `hitsPerPage` in someone's `consult-hn-default-search-params` working.
 
 ## 6. State object and ownership
 
@@ -146,11 +150,17 @@ Changed: `consult-hn` (keyword args, keymap, setup hook, seeding), `consult-hn--
 
 Removed: `consult-hn-transient--format-query`.
 
+As built in Phase 1, where the inventory above turned out to want more seams. New: `consult-hn--params-render`, `consult-hn--params-tags`, `consult-hn--params-numeric-filters`, `consult-hn--params-endpoint`, `consult-hn--api-url`, `consult-hn--request-url` (input plus state to URL), `consult-hn--input-split`, `consult-hn--legacy-pairs`, `consult-hn--dedup`, `consult-hn--nonblank`. Removed: `consult-hn--nb-pages`, a defvar every caller shadowed with a `let`, so the global was written and never read.
+
+`consult-hn--input->params` came out of Phase 1 with its behaviour pinned by its specs and no caller left inside the package: the fetch path takes the legacy suffix through `consult-hn--legacy-pairs` instead, because the whole-input version merges `consult-hn-default-search-params` in a way that would let a default outrank the state. It is the compatibility surface and nothing else. Phase 2 removes the last producer of the string, which is the moment to decide whether the parser goes too.
+
 ## 13. Testing
 
 Unit, extending the existing 33 specs: parameter rendering for every row of section 5 including combinations; chips string for empty, single and full states; the compatibility adapter for the legacy string; generation guard drops stale pages; dedup drops repeats; page cap honoured; annotation cap and ellipsis; `vertico-count` scaling including the already-buffer-local case; restart handle sequence.
 
 End to end, following the harness that proved itself in the sibling package: a real interactive `emacs -nw -Q` under a PTY with real consult, vertico and embark from a sandbox, the HN API stubbed at the `url-retrieve` seam, scenarios driven through the actual command loop with queued key events, the suite run twice in-process to prove no state leaks, and a watchdog against hangs. Scenarios: streaming with dedup and cap; a parameter command re-queries and replaces results; chips update and are gone after exit; narrowing sends no requests; recursive read for author does not corrupt the session; abort mid-stream stops the chain; the legacy string still works; ` *Minibuf-1*` intact throughout.
+
+One thing the harness had to grow for D8, worth knowing before writing the Phase 2 scenarios. Killing the request buffer is a complete defence inside the stub, because delivery is a timer that checks `buffer-live-p` and Emacs runs it to completion between commands: a mid-stream re-query alone therefore proves nothing about the generation guard. What killing cannot reach is a response arriving in a buffer the caller never received, which is what a redirect does, and the stub now models exactly that under `consult-hn-e2e--detached-page`. The scenario carries its own control, asserting the retired response was in fact delivered, and it fails with the guard removed.
 
 The existing `make test` target is broken in a way worth fixing while here: it calls plain `package-initialize` against the user's package directory, so it fails locally with `void-function buttercup-run-discover` and only works on CI.
 
@@ -170,7 +180,7 @@ Four phases, each ending green and committable. Phase 0 is independent and can b
 
 Phase 0, defects and height. Obsolete symbols that break `make check-compile` on Emacs 31 (`any` in rx twice, `if-let`, `dom-texts`; the last needs `with-suppressed-warnings` rather than a swap, since `dom-inner-text` arrived in 31.1 and drops the separator). The error handler that itself errors, `(concat "HN parse error: " err)` on an error object. Annotation extraction, cap, cache and `vertico-count` scaling (D10). Acceptance: `make check-compile` clean on 31, unit suite green with new specs, minibuffer height bounded in a live session.
 
-Phase 1, engine. Parameter state object and rendering, page cap and `hitsPerPage` (D7), generation guard (D8), dedup (D9), compatibility adapter (D12). No visible UI change beyond fewer requests and no stale results. Acceptance: unit specs for every mapping and guard, live session verified to issue the expected request count for a known broad query.
+Phase 1, engine. Parameter state object and rendering, page cap and `hitsPerPage` (D7), generation guard (D8), dedup (D9), compatibility adapter (D12). No visible UI change beyond fewer requests and no stale results. Acceptance: unit specs for every mapping and guard, live session verified to issue the expected request count for a known broad query. Done: 91 unit specs, 30 e2e checks over six scenarios run twice, and a live run of `query=clojure` costing 10 requests for 1000 distinct items where the same coverage used to cost 50. `consult-hn-max-pages` defaults to 10, which is what the endpoint offers at 100 hits a page, so the default cap changes no result set and only the pathological cases feel it.
 
 Phase 2, session UI. Keymap and parameter commands, chips overlay, restart handle wiring, transient rewritten onto the state object. Acceptance: e2e scenarios for parameter re-query, chips lifecycle, recursive read, plus the leak assertion.
 

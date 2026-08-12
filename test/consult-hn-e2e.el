@@ -37,8 +37,18 @@
 (defvar consult-hn-e2e--failures 0)
 (defvar consult-hn-e2e--round 1)
 (defvar consult-hn-e2e--requests nil "Recorded request URLs, newest first.")
+(defvar consult-hn-e2e--delivered nil "URLs whose callback actually ran.")
 (defvar consult-hn-e2e--previews nil "Recorded preview/browse invocations.")
 (defvar consult-hn-e2e--buffers nil "Response buffers handed out by the stub.")
+
+(defvar consult-hn-e2e--detached-page nil
+  "Page whose response arrives in a buffer the caller never saw.
+Models a redirect, where `url-retrieve' hands one buffer back and
+another one delivers: cancelling a search by killing what you were
+handed cannot reach it.  Nil for the ordinary path.")
+
+(defvar consult-hn-e2e--detached-delay 0.4
+  "How long a detached response stays in the air.")
 
 ;;; Fixtures
 
@@ -47,9 +57,12 @@
   "A comment far longer than any sane annotation, ending in a marker.
 The marker must never reach the display once the cap is in force.")
 
-(defun consult-hn-e2e--hit (n &optional comment)
-  "One API hit numbered N, a comment hit when COMMENT is given."
-  (let ((h (list (cons "author" (format "user%d" n))
+(defun consult-hn-e2e--hit (n &optional comment label)
+  "One API hit numbered N, a comment hit when COMMENT is given.
+LABEL titles the hit, so a second fixture set can be told apart from
+the main one by looking at the display alone."
+  (let ((title (format "%s %d" (or label "Story title") n))
+        (h (list (cons "author" (format "user%d" n))
                  (cons "created_at" (format "2025-01-30T10:%02d:00" n))
                  (cons "created_at_i" (- 1738226435 (* n 3600)))
                  (cons "objectID" (number-to-string (+ 1000 n)))
@@ -57,9 +70,9 @@ The marker must never reach the display once the cap is in force.")
                  (cons "points" (* n 3))
                  (cons "num_comments" n))))
     (if comment
-        (append h (list (cons "story_title" (format "Story title %d" n))
+        (append h (list (cons "story_title" title)
                         (cons "comment_text" (format "<p>%s</p>" comment))))
-      (append h (list (cons "title" (format "Story title %d" n))
+      (append h (list (cons "title" title)
                       (cons "url" (format "https://example.com/%d" n)))))))
 
 (defconst consult-hn-e2e--pages
@@ -70,28 +83,58 @@ The marker must never reach the display once the cap is in force.")
          (consult-hn-e2e--hit 3 "short reply about emacs")
          (consult-hn-e2e--hit 4)
          (consult-hn-e2e--hit 5 consult-hn-e2e--long-comment))
+   ;; hit 3 again: sorted by date the endpoint paginates over a moving
+   ;; window, and an item pushed down by newer ones lands on two pages
    (list (consult-hn-e2e--hit 6) (consult-hn-e2e--hit 7 "another reply")
+         (consult-hn-e2e--hit 3 "short reply about emacs")
          (consult-hn-e2e--hit 8) (consult-hn-e2e--hit 9 "yet another reply")
          (consult-hn-e2e--hit 10))
    (list (consult-hn-e2e--hit 11) (consult-hn-e2e--hit 12 "trailing reply")
          (consult-hn-e2e--hit 13) (consult-hn-e2e--hit 14)
          (consult-hn-e2e--hit 15)))
-  "Three pages of five hits each; fifteen candidates in total.")
+  "Three pages holding sixteen hits, fifteen of them distinct.")
 
-(defun consult-hn-e2e--payload (page)
-  "JSON body for PAGE."
-  (json-encode
-   (list (cons "hits" (or (nth page consult-hn-e2e--pages) []))
-         (cons "nbPages" (length consult-hn-e2e--pages))
-         (cons "page" page)
-         (cons "hitsPerPage" 5)
-         (cons "nbHits" 15))))
+(defun consult-hn-e2e--fixture-hits (pages)
+  "Number of hits PAGES serve, repeats and all."
+  (apply #'+ (mapcar #'length pages)))
+
+(defconst consult-hn-e2e--other-query "rust"
+  "The query served from a fixture set of its own.")
+
+(defconst consult-hn-e2e--other-pages
+  (list (list (consult-hn-e2e--hit 21 nil "Other story")
+              (consult-hn-e2e--hit 22 "a reply" "Other story")
+              (consult-hn-e2e--hit 23 nil "Other story")))
+  "One page, titled apart, so a second search is visible as such.")
 
 (defun consult-hn-e2e--url-page (url)
   "Page number requested by URL."
   (if (string-match "[?&]page=\\([0-9]+\\)" url)
       (string-to-number (match-string 1 url))
     0))
+
+(defun consult-hn-e2e--url-query (url)
+  "Query URL asks for."
+  (if (string-match "[?&]query=\\([^&]*\\)" url)
+      (url-unhex-string (match-string 1 url))
+    ""))
+
+(defun consult-hn-e2e--url-pages (url)
+  "Fixture pages URL is served from."
+  (if (equal (consult-hn-e2e--url-query url) consult-hn-e2e--other-query)
+      consult-hn-e2e--other-pages
+    consult-hn-e2e--pages))
+
+(defun consult-hn-e2e--payload (url)
+  "JSON body for URL."
+  (let* ((pages (consult-hn-e2e--url-pages url))
+         (page (consult-hn-e2e--url-page url)))
+    (json-encode
+     (list (cons "hits" (or (nth page pages) []))
+           (cons "nbPages" (length pages))
+           (cons "page" page)
+           (cons "hitsPerPage" 5)
+           (cons "nbHits" (consult-hn-e2e--fixture-hits pages))))))
 
 ;;; The only stub: the HTTP seam
 
@@ -100,24 +143,34 @@ The marker must never reach the display once the cap is in force.")
 Mirrors the real thing closely enough to matter: the callback runs in
 the response buffer with `url-http-end-of-headers' set, and a buffer
 killed before delivery never calls back, which is how cancellation
-works in production."
+works in production.  A page named by `consult-hn-e2e--detached-page'
+answers from a buffer the caller never receives, the one shape of
+response that cancelling cannot reach."
   (unless (string-match-p "hn\\.algolia\\.com" url)
     ;; nothing but the search API may reach the network; the browse and
     ;; preview seams are stubbed separately
     (consult-hn-e2e--check "unexpected non-API request" nil url))
   (push url consult-hn-e2e--requests)
-  (let ((buf (generate-new-buffer " *consult-hn-e2e-response*")))
-    (push buf consult-hn-e2e--buffers)
-    (with-current-buffer buf
+  (let* ((detached (eql (consult-hn-e2e--url-page url)
+                        consult-hn-e2e--detached-page))
+         (response (generate-new-buffer " *consult-hn-e2e-response*"))
+         (handed-back (if detached
+                          (generate-new-buffer " *consult-hn-e2e-redirected*")
+                        response)))
+    (push response consult-hn-e2e--buffers)
+    (unless (eq handed-back response)
+      (push handed-back consult-hn-e2e--buffers))
+    (with-current-buffer response
       (insert "HTTP/1.1 200 OK\nContent-Type: application/json\n\n")
       (setq-local url-http-end-of-headers (copy-marker (point)))
-      (insert (consult-hn-e2e--payload (consult-hn-e2e--url-page url))))
+      (insert (consult-hn-e2e--payload url)))
     (run-at-time
-     0.03 nil
+     (if detached consult-hn-e2e--detached-delay 0.03) nil
      (lambda ()
-       (when (buffer-live-p buf)
-         (with-current-buffer buf (funcall callback nil)))))
-    buf))
+       (when (buffer-live-p response)
+         (push url consult-hn-e2e--delivered)
+         (with-current-buffer response (funcall callback nil)))))
+    handed-back))
 
 ;;; Assertion plumbing
 
@@ -171,11 +224,19 @@ silently and surface only as a watchdog timeout much later."
   (when-let* ((win (active-minibuffer-window)))
     (window-buffer win)))
 
-(defun consult-hn-e2e--candidate-count ()
-  "Number of candidates the completion table currently serves."
+(defun consult-hn-e2e--candidates ()
+  "Candidates the completion table currently serves."
   (when-let* ((mb (consult-hn-e2e--minibuffer)))
     (with-current-buffer mb
-      (length (all-completions "" minibuffer-completion-table nil)))))
+      (all-completions "" minibuffer-completion-table nil))))
+
+(defun consult-hn-e2e--candidate-count ()
+  "Number of candidates the completion table currently serves."
+  (length (consult-hn-e2e--candidates)))
+
+(defun consult-hn-e2e--pages-requested ()
+  "Pages asked for so far, in the order they were asked for."
+  (mapcar #'consult-hn-e2e--url-page (reverse consult-hn-e2e--requests)))
 
 (defun consult-hn-e2e--rendered ()
   "What vertico last handed to the display engine, as a string."
@@ -203,6 +264,7 @@ control does not depend on the code under test."
 (defun consult-hn-e2e--reset ()
   "Scrub artifacts so scenarios (and rounds) start clean."
   (setq consult-hn-e2e--requests nil
+        consult-hn-e2e--delivered nil
         consult-hn-e2e--previews nil)
   (dolist (b consult-hn-e2e--buffers)
     (when (buffer-live-p b) (kill-buffer b)))
@@ -223,14 +285,29 @@ control does not depend on the code under test."
         (when ok
           (consult-hn-e2e--check
            "S1 pages requested in order"
-           (equal (mapcar #'consult-hn-e2e--url-page
-                          (reverse consult-hn-e2e--requests))
-                  '(0 1 2))
-           (format "%S" (mapcar #'consult-hn-e2e--url-page
-                                (reverse consult-hn-e2e--requests))))
+           (equal (consult-hn-e2e--pages-requested) '(0 1 2))
+           (format "%S" (consult-hn-e2e--pages-requested)))
+          (consult-hn-e2e--check
+           "S1 a full page of hits is asked for"
+           (seq-every-p (lambda (u)
+                          (string-match-p
+                           (format "hitsPerPage=%d" consult-hn-hits-per-page) u))
+                        consult-hn-e2e--requests)
+           (car (last consult-hn-e2e--requests)))
           (consult-hn-e2e--check
            "S1 previewing the selection went through the preview seam"
            consult-hn-e2e--previews)
+          ;; the fixtures serve sixteen hits for fifteen items, so the
+          ;; count above is itself the proof the repeat was dropped
+          (consult-hn-e2e--check
+           "S1 the item repeated across pages arrives once"
+           (and (eql 16 (consult-hn-e2e--fixture-hits consult-hn-e2e--pages))
+                (eql 1 (seq-count (lambda (c) (string-match-p "Story title 3 " c))
+                                  (consult-hn-e2e--candidates))))
+           (format "served=%S shown=%S"
+                   (consult-hn-e2e--fixture-hits consult-hn-e2e--pages)
+                   (seq-count (lambda (c) (string-match-p "Story title 3 " c))
+                              (consult-hn-e2e--candidates))))
           ;; the stub ignores the query, so only the URL can prove a
           ;; multi-word search leaves Emacs in one piece
           (consult-hn-e2e--check
@@ -310,14 +387,98 @@ control does not depend on the code under test."
                   (local-variable-p 'vertico-count)))))
      (funcall k))))
 
+(defvar consult-hn-e2e--max-pages consult-hn-max-pages
+  "The cap every scenario but the page-cap one runs under.")
+
+(defun consult-hn-e2e--scenario-page-cap (k)
+  "The chain stops at the cap, not at the page count the endpoint reports."
+  (consult-hn-e2e--reset)
+  ;; fixtures declare three pages; two is all this session may spend
+  (setq consult-hn-max-pages 2)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S5 pages stream in up to the cap"
+   (lambda () (eql (consult-hn-e2e--candidate-count) 10))
+   (lambda (_)
+     ;; long enough for a third page to have arrived, had one been asked for
+     (run-at-time
+      0.6 nil
+      (lambda ()
+        (consult-hn-e2e--check
+         "S5 no page past the cap was requested"
+         (equal (consult-hn-e2e--pages-requested) '(0 1))
+         (format "%S" (consult-hn-e2e--pages-requested)))
+        (consult-hn-e2e--check
+         "S5 the session settles at the capped candidate count"
+         (eql (consult-hn-e2e--candidate-count) 10)
+         (format "%S" (consult-hn-e2e--candidate-count)))
+        (setq consult-hn-max-pages consult-hn-e2e--max-pages)
+        (consult-hn-e2e--keys "C-g")
+        (consult-hn-e2e--await
+         "S5 session closes on abort"
+         (lambda () (zerop (minibuffer-depth)))
+         (lambda (_) (funcall k))))))))
+
+(defun consult-hn-e2e--scenario-stale-chain (k)
+  "A re-query mid-stream leaves nothing of the first search behind.
+Page 1 of the first search answers from a buffer the session never
+received, so cancelling it is not on the table: only the generation it
+was issued under can keep its results out of the session."
+  (consult-hn-e2e--reset)
+  (setq consult-hn-e2e--detached-page 1)
+  (run-at-time 0 nil #'consult-hn "emacs lisp")
+  (consult-hn-e2e--await
+   "S6 first search shows its first page"
+   (lambda () (<= 5 (consult-hn-e2e--candidate-count)))
+   (lambda (_)
+     ;; re-query while page 1 of the first search is still in the air
+     (consult-hn-e2e--keys (concat "C-a C-k " consult-hn-e2e--other-query))
+     (consult-hn-e2e--await
+      "S6 second search replaces the results"
+      (lambda () (seq-some (lambda (c) (string-match-p "Other story" c))
+                           (consult-hn-e2e--candidates)))
+      (lambda (_)
+        (run-at-time
+         (+ 0.3 consult-hn-e2e--detached-delay) nil
+         (lambda ()
+           ;; the control: without a delivery there is nothing to drop
+           (consult-hn-e2e--check
+            "S6 the retired page was delivered all the same"
+            (seq-some (lambda (u)
+                        (and (eql 1 (consult-hn-e2e--url-page u))
+                             (equal (consult-hn-e2e--url-query u) "emacs lisp")))
+                      consult-hn-e2e--delivered)
+            (format "%S" consult-hn-e2e--delivered))
+           (consult-hn-e2e--check
+            "S6 no candidate of the retired search survives"
+            (not (seq-some (lambda (c) (string-match-p "Story title" c))
+                           (consult-hn-e2e--candidates)))
+            (format "%S" (seq-take (consult-hn-e2e--candidates) 3)))
+           (consult-hn-e2e--check
+            "S6 the retired chain asked for no further page"
+            (not (seq-some (lambda (u)
+                             (and (eql 2 (consult-hn-e2e--url-page u))
+                                  (equal (consult-hn-e2e--url-query u) "emacs lisp")))
+                           consult-hn-e2e--requests))
+            (format "%S" (mapcar #'consult-hn-e2e--url-page
+                                 consult-hn-e2e--requests)))
+           (setq consult-hn-e2e--detached-page nil)
+           (consult-hn-e2e--keys "C-g")
+           (consult-hn-e2e--await
+            "S6 session closes on abort"
+            (lambda () (zerop (minibuffer-depth)))
+            (lambda (_) (funcall k))))))))))
+
 ;;; Runner
 
 (defvar consult-hn-e2e--scenarios
   (list #'consult-hn-e2e--scenario-streaming
         #'consult-hn-e2e--scenario-annotation
         #'consult-hn-e2e--scenario-height
-        #'consult-hn-e2e--scenario-teardown)
-  "Ordered; the middle two observe the session opened by the first.")
+        #'consult-hn-e2e--scenario-teardown
+        #'consult-hn-e2e--scenario-page-cap
+        #'consult-hn-e2e--scenario-stale-chain)
+  "Ordered; scenarios 2 and 3 observe the session opened by the first.")
 
 (defun consult-hn-e2e--run-scenarios (scenarios done)
   "Run SCENARIOS sequentially, then call DONE."

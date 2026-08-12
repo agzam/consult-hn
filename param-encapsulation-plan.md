@@ -2,7 +2,7 @@
 
 Companion to `param-encapsulation-spec.md`. The spec says what and why; this says how, with the environment facts and acceptance gates. Branch `param-encapsulation`. Both documents are temporary and get removed before merge.
 
-Phase 0 is done and committed. Phases 1 to 3 remain.
+Phases 0 and 1 are done and committed. Phases 2 and 3 remain.
 
 ## 0. Environment, read this before running anything
 
@@ -47,7 +47,9 @@ Live verification in the user's running Emacs, through the `elisp-eval` MCP, is 
 - `consult-hn-e2e--safe-call` wraps every step: a signalling step reports at the point of failure instead of silently killing the timer chain and surfacing 90 seconds later as a watchdog timeout.
 - Assertions must observe what redisplay produced. The height probe reads the `before-string` of `vertico--candidates-ov`, which is the material `vertico--display-candidates` hands the display engine while sizing the window from `(length lines)`, the candidate count. Never call into the code under test to produce the state being asserted.
 
-Adding a scenario: write `consult-hn-e2e--scenario-NAME (k)`, ending in `(funcall k)`, and add it to `consult-hn-e2e--scenarios`. Scenarios run in order and the middle ones observe the session the first one opened.
+Adding a scenario: write `consult-hn-e2e--scenario-NAME (k)`, ending in `(funcall k)`, and add it to `consult-hn-e2e--scenarios`. Scenarios run in order and the middle ones observe the session the first one opened. A scenario added after the teardown one opens and closes its own session, as the cap and stale-chain scenarios do.
+
+Phase 1 grew the harness in three places. The fixtures now serve sixteen hits for fifteen items, since hit 3 sits on two pages, which is what makes every candidate count in the suite a dedup assertion as well. The stub serves a second fixture set, titled `Other story`, for `query=rust`, so a re-query is visible in the display rather than merely counted. And `consult-hn-e2e--detached-page` makes a page answer from a buffer the caller never received, modelling a redirect; it is the only shape of response that cancelling cannot reach, and therefore the only way the generation guard can be observed from the outside. Anything asserting cancellation should use it, and should carry a control proving the response was delivered at all, or the assertion passes for the wrong reason.
 
 ## 2. Phase 1, the parameter engine
 
@@ -71,6 +73,8 @@ Step 1.4, the generation guard. Replace `expected-search`, which is compared aga
 Step 1.5, dedup. Track `objectID` per chain and drop repeats. `search_by_date` paginates over a moving window, so an item can appear on two pages. Requires carrying `objectID` through `consult-hn--process-results`. Gate: fixtures repeating one hit across pages, e2e asserting the total is the unique count.
 
 Phase 1 acceptance, all of it: compile gate clean, unit suite green, `make e2e` green twice, and a live session against the real API showing the request count bounded by the cap for a known broad query.
+
+Done. Compile gate clean, 91 specs, 30 e2e checks per round green twice. Live, against the real API: `query=clojure` cost 10 requests for 1000 items, all distinct, where the endpoint reports 50 pages at the old 20 hits a page and 10 at 100; the same query under a cap of 3 stopped at 3 requests and 300 items. Every parameter in section 5 was rendered and fetched live, and the returned hits were checked against what the parameter claimed: points above the floor, all within the range, comment hits only, the author's items only, the front page on the relevance endpoint, and a URL-restricted search whose every hit carried the term in its URL. Each of the three defences was also shown to discriminate, by removing it and watching the suite go red: the cap, the generation guard and the dedup.
 
 ## 3. Phase 2, session UI and the transient
 

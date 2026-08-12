@@ -61,6 +61,22 @@ filterable and is shown in full when the item is opened."
   :type 'integer
   :group 'consult-hn)
 
+(defcustom consult-hn-hits-per-page 100
+  "Hits asked for per API page.
+The endpoint answers a large page as readily as a small one, so the
+same coverage costs fewer round trips: a broad query needs 50 requests
+at 20 hits a page and 10 at 100.  Lower it on a slow link."
+  :type 'integer
+  :group 'consult-hn)
+
+(defcustom consult-hn-max-pages 10
+  "Pages fetched for one search before the chain stops.
+Pagination otherwise runs to whatever page count the endpoint reports,
+which for a broad query is dozens of requests for candidates nobody
+scrolls to."
+  :type 'integer
+  :group 'consult-hn)
+
 (defcustom consult-hn-preview-fn #'consult-hn-eww
   "Function pointer for browsing selected HN Story."
   :type 'function
@@ -83,6 +99,113 @@ filterable and is shown in full when the item is opened."
 
 (defvar consult-hn--history nil
   "History of queries for `consult-hn'.")
+
+(defvar consult-hn--params
+  '(:query nil :type all :author nil :points nil :comments nil
+    :range all :front-page nil :url-match nil :sort nil)
+  "Search parameters, the single source of truth for a request.
+Keys: `:query' string, `:type' one of `all', `story', `comment',
+`:author' string, `:points' and `:comments' integers, `:range' one of
+`all', `24h', `week', `month', `year', `:front-page' and `:url-match'
+booleans, `:sort' nil, `date' or `relevance'.  It outlives a session,
+so the next one starts where the last left off.")
+
+(defvar consult-hn--generation 0
+  "Counter identifying the search a request belongs to.
+Bumped by the source whenever it restarts or is torn down, so a
+response that outlives its request can tell that nobody wants it.")
+
+(defvar consult-hn--seen (make-hash-table :test 'equal)
+  "Item ids already delivered for the current search.")
+
+(defconst consult-hn--range-seconds
+  '((24h . 86400) (week . 604800) (month . 2592000) (year . 31536000))
+  "How far back each `:range' value reaches, in seconds.")
+
+(defun consult-hn--nonblank (str)
+  "STR unless it is nil or nothing but whitespace."
+  (unless (or (null str) (string-blank-p str)) str))
+
+(defun consult-hn--params-tags (params)
+  "Value of the API `tags' parameter for PARAMS, or nil.
+Comma-joined tags are an AND on the endpoint."
+  (when-let* ((tags (delq nil
+                          (list (pcase (plist-get params :type)
+                                  ('story "story")
+                                  ('comment "comment"))
+                                (when-let* ((author (consult-hn--nonblank
+                                                     (plist-get params :author))))
+                                  (concat "author_" author))
+                                (when (plist-get params :front-page)
+                                  "front_page")))))
+    (string-join tags ",")))
+
+(defun consult-hn--params-numeric-filters (params)
+  "Value of the API `numericFilters' parameter for PARAMS, or nil.
+The endpoint takes several conditions in one comma-separated value."
+  (when-let* ((filters
+               (delq nil
+                     (list (when-let* ((points (plist-get params :points)))
+                             (format "points>%s" points))
+                           (when-let* ((comments (plist-get params :comments)))
+                             (format "num_comments>%s" comments))
+                           (when-let* ((secs (alist-get
+                                              (plist-get params :range)
+                                              consult-hn--range-seconds)))
+                             (format "created_at_i>%d"
+                                     (- (time-convert nil 'integer) secs)))))))
+    (string-join filters ",")))
+
+(defun consult-hn--params-render (params &optional page)
+  "API parameter alist for PARAMS, asking for PAGE when given.
+Values go in raw: `url-build-query-string' hexifies on the way out, so
+encoding here would escape the escapes.  What PARAMS sets wins over
+`consult-hn-default-search-params', which in turn wins over the page
+size this package would otherwise ask for."
+  (let ((rendered
+         (delq nil
+               (list (when-let* ((query (consult-hn--nonblank
+                                         (plist-get params :query))))
+                       (list 'query query))
+                     (when-let* ((tags (consult-hn--params-tags params)))
+                       (list 'tags tags))
+                     (when-let* ((numeric (consult-hn--params-numeric-filters
+                                           params)))
+                       (list 'numericFilters numeric))
+                     (when (plist-get params :url-match)
+                       (list 'restrictSearchableAttributes "url"))))))
+    (dolist (default consult-hn-default-search-params)
+      (when (and (memq (car default) consult-hn--api-allowed-keys)
+                 (not (assq (car default) rendered)))
+        (setq rendered (append rendered (list default)))))
+    (unless (assq 'hitsPerPage rendered)
+      (setq rendered (append rendered
+                             (list (list 'hitsPerPage
+                                         consult-hn-hits-per-page)))))
+    (if page
+        (append rendered (list (list 'page page)))
+      rendered)))
+
+(defun consult-hn--params-endpoint (params &optional rendered)
+  "Endpoint PARAMS ask for, given their RENDERED parameter alist.
+An unset `:sort' reproduces the rule this package has always used,
+where asking for the front page means asking for its ranking."
+  (pcase (plist-get params :sort)
+    ('relevance "search")
+    ('date "search_by_date")
+    (_ (if (string-match-p
+            "front_page"
+            (or (car (alist-get 'tags (or rendered
+                                          (consult-hn--params-render params))))
+                ""))
+           "search"
+         "search_by_date"))))
+
+(defun consult-hn--api-url (params rendered)
+  "Request URL for PARAMS carrying the RENDERED parameter alist."
+  (format "https://hn.algolia.com/api/v1/%s?%s"
+          (consult-hn--params-endpoint params rendered)
+          (url-build-query-string rendered)))
 
 (cl-defun consult-hn-eww (&key story-url title hn-story-url author created-at hn-object-url num-comments points comment &allow-other-keys)
   "Open hacker News item in eww buffer.
@@ -184,29 +307,49 @@ timestamp value must be in utc timezone."
      (t (concat (car (split-string (ts-human-format-duration diff) ","))
                 " ago")))))
 
+(defun consult-hn--input-split (input)
+  "INPUT split into its query part and its legacy parameter part."
+  (split-string input "--" nil " +"))
+
+(defun consult-hn--legacy-pairs (input)
+  "Parameters from the legacy ` -- key=value' suffix of INPUT.
+Undocumented and unwarned, still parsed: the package is published and
+someone may have the syntax in a keybinding."
+  (when-let* ((parts (cadr (consult-hn--input-split input))))
+    (cl-loop for pair in (split-string parts " +" t)
+             when (string-match "\\([^=]+\\)=\\(.+\\)" pair)
+             collect (list (intern (match-string 1 pair))
+                           (match-string 2 pair)))))
+
 (defun consult-hn--input->params (input)
   "Turn INPUT into a proper query string."
   (when (and input (not (string-blank-p input)))
-    (let* ((split (split-string input "--" nil " +"))
-           (params (thread-last
-                     (when-let* ((parts (cadr split)))
-                       ;; Split by spaces first to get individual key=value pairs
-                       (let ((pairs (split-string parts " +" t)))
-                         (cl-loop for pair in pairs
-                                  when (string-match "\\([^=]+\\)=\\(.+\\)" pair)
-                                  collect (list (intern (match-string 1 pair))
-                                                (match-string 2 pair)))))
+    (let* ((params (thread-last
+                     (consult-hn--legacy-pairs input)
                      (seq-union consult-hn-default-search-params)
                      (seq-filter (lambda (x)
-                                   (member (car x) consult-hn--api-allowed-keys)))))
+                                   (memq (car x) consult-hn--api-allowed-keys)))))
            ;; deliberately raw: `url-build-query-string' hexifies every
            ;; value on the way out, so encoding here escapes the escapes
            ;; and the API is asked for a query nobody wrote
-           (_ (unless (string-blank-p (car-safe split))
-                (setf (alist-get 'query params)
-                      (list (car-safe split)))))
-           (params (cl-remove-duplicates params :key #'car)))
-      params)))
+           (query (car-safe (consult-hn--input-split input)))
+           (_ (unless (string-blank-p query)
+                (setf (alist-get 'query params) (list query)))))
+      (cl-remove-duplicates params :key #'car))))
+
+(defun consult-hn--request-url (input page)
+  "Request URL for INPUT at PAGE under the current parameter state.
+INPUT carries the query; a legacy ` -- key=value' suffix is layered
+over the rendered state, so what a caller spelled out by hand wins."
+  (let* ((params (plist-put (copy-sequence consult-hn--params)
+                            :query (car-safe (consult-hn--input-split input))))
+         (legacy (seq-filter (lambda (x)
+                               (memq (car x) consult-hn--api-allowed-keys))
+                             (consult-hn--legacy-pairs input)))
+         (rendered (append (seq-remove (lambda (x) (assq (car x) legacy))
+                                       (consult-hn--params-render params page))
+                           legacy)))
+    (consult-hn--api-url params rendered)))
 
 (defun consult-hn--parse-row-for-lookup (cand-str)
   "Parse displayed candidate string CAND-STR and break into parts."
@@ -271,33 +414,35 @@ timestamp value must be in utc timezone."
       found)))
 
 (defvar url-http-end-of-headers) ; used by url-http
-(defvar consult-hn--nb-pages nil "Stores number of pages per request between calls.")
 
-(defun consult-hn--fetch-page-async (input page async expected-search &optional buffer-callback)
+(defun consult-hn--dedup (rows)
+  "ROWS that this search has not delivered already.
+Sorted by date the endpoint paginates over a moving window, so an item
+can sit on two pages when newer ones arrive between the requests."
+  (seq-filter (lambda (row)
+                (let ((id (get-text-property 0 'object-id row)))
+                  (cond ((null id) t)
+                        ((gethash id consult-hn--seen) nil)
+                        (t (puthash id t consult-hn--seen) t))))
+              rows))
+
+(defun consult-hn--fetch-page-async (input page async generation &optional buffer-callback)
   "Fetch a single page asynchronously.
 INPUT is the search query string.
 PAGE is the page number to fetch.
 ASYNC is the callback function to send results downstream.
-EXPECTED-SEARCH is the search term this request belongs to.
+GENERATION is the search this request belongs to.  Killing the request
+buffer only cancels what has not been delivered yet; a response already
+on its way, or one arriving in a buffer the caller never saw, still
+runs its callback, and the generation is what tells it to stop.
 BUFFER-CALLBACK is an optional function called with the request buffer."
-  (let* ((params (consult-hn--input->params input))
-         (_ (setf (alist-get 'page params) (list page)))
-         (search-type (if (and params
-                               (thread-last
-                                 params (alist-get 'tags)
-                                 car-safe
-                                 (funcall (lambda (x) (or x "")))
-                                 (string-match-p "front_page")))
-                          "search" "search_by_date"))
-         (search-url (format "https://hn.algolia.com/api/v1/%s?%s"
-                             search-type
-                             (url-build-query-string params))))
+  (let ((search-url (consult-hn--request-url input page)))
     (let ((buffer (url-retrieve
                    search-url
                    (lambda (status)
                      ;; Only process if this is still the current search
                      (when (and (buffer-live-p (current-buffer))
-                                (equal input expected-search))
+                                (eql generation consult-hn--generation))
                        (if-let* ((error (plist-get status :error)))
                            (message "HN fetch error: %s" error)
                          ;; When `url-retrieve` fetches an HTTP resource, it:
@@ -312,17 +457,20 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
                                (let* ((json-object-type 'hash-table)
                                       (json-array-type 'list)
                                       (result (json-read))
-                                      (rows (consult-hn--process-results result))
-                                      (consult-hn--nb-pages (gethash "nbPages" result))
-                                      (current-page (gethash "page" result)))
-                                 ;; Send results only if still current search
-                                 (when (and rows (equal input expected-search))
+                                      (rows (consult-hn--dedup
+                                             (consult-hn--process-results result)))
+                                      (nb-pages (gethash "nbPages" result))
+                                      (current-page (gethash "page" result))
+                                      (next-page (1+ current-page)))
+                                 (when rows
                                    (funcall async rows))
-                                 ;; Fetch next page if still current search
-                                 (when (and (< (1+ current-page) consult-hn--nb-pages)
-                                            (equal input expected-search))
+                                 ;; the endpoint reports dozens of pages
+                                 ;; for a broad query; the tail of that
+                                 ;; is candidates nobody scrolls to
+                                 (when (and (< next-page nb-pages)
+                                            (< next-page consult-hn-max-pages))
                                    (consult-hn--fetch-page-async
-                                    input (1+ current-page) async expected-search buffer-callback)))
+                                    input next-page async generation buffer-callback)))
                              ;; a killed request buffer truncates the
                              ;; response mid-parse, which is what
                              ;; cancelling a search looks like from here
@@ -336,42 +484,35 @@ BUFFER-CALLBACK is an optional function called with the request buffer."
 (defun consult-hn--async-source (async)
   "Async source function for HN search.
 ASYNC is the callback function to send results downstream."
-  (let ((request-buffers nil)
-        (page 0)
-        (current-search nil))  ; Track current search term
-    (lambda (action)
-      (pcase action
-        ((pred stringp)
-         ;; New search - update current search term
-         (setq current-search action)
-         (setq page 0 consult-hn--nb-pages nil)
+  (let ((request-buffers nil))
+    (cl-flet ((cancel ()
+                ;; a newer generation retires whatever is still in the
+                ;; air; killing the buffers stops the rest from arriving
+                (setq consult-hn--generation (1+ consult-hn--generation))
+                (clrhash consult-hn--seen)
+                (dolist (buf request-buffers)
+                  (when (buffer-live-p buf)
+                    (let ((kill-buffer-query-functions nil))
+                      (kill-buffer buf))))
+                (setq request-buffers nil)))
+      (lambda (action)
+        (pcase action
+          ((pred stringp)
+           (cancel)
 
-         ;; Cancel existing requests
-         (dolist (buf request-buffers)
-           (when (buffer-live-p buf)
-             (let ((kill-buffer-query-functions nil))
-               (kill-buffer buf))))
-         (setq request-buffers nil)
+           ;; Clear previous results
+           (funcall async 'flush)
 
-         ;; Clear previous results
-         (funcall async 'flush)
+           ;; Start fetching if input is long enough
+           (when (<= 2 (length action))
+             (consult-hn--fetch-page-async
+              action 0 async consult-hn--generation
+              (lambda (buf)
+                (push buf request-buffers)))))
 
-         ;; Start fetching if input is long enough
-         (when (<= 2 (length action))
-           (consult-hn--fetch-page-async
-            action page async current-search
-            (lambda (buf)
-              (push buf request-buffers)))))
+          ('destroy (cancel))
 
-        ('destroy
-         ;; Clean up all request buffers
-         (dolist (buf request-buffers)
-           (when (buffer-live-p buf)
-             (let ((kill-buffer-query-functions nil))
-               (kill-buffer buf))))
-         (setq request-buffers nil))
-
-        (_ (funcall async action))))))
+          (_ (funcall async action)))))))
 
 (defun consult-hn--process-results (result)
   "Process the results from API response.
@@ -400,13 +541,15 @@ RESULT is the parsed JSON response from the HN API."
               (ts (gethash "created_at_i" x))
               (hn-base-url "https://news.ycombinator.com/item?id=%s")
               (hn-story-url (format hn-base-url (gethash "story_id" x)))
-              (object-url (format hn-base-url (gethash "objectID" x)))
+              (object-id (gethash "objectID" x))
+              (object-url (format hn-base-url object-id))
               (points (gethash "points" x))
               (num-comments (gethash "num_comments" x)))
          (when title
            (propertize
             (replace-regexp-in-string " +" " " title)
             'title title
+            'object-id object-id
             'author author
             'comment comment-text
             'created-at created-at
