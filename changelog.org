@@ -1,0 +1,16 @@
+#+TITLE: Changelog
+#+AUTHOR: Ag Ibragimov
+
+All notable changes to this project will be documented in this file.
+
+* [1.1.0] - 2026-08-12
+** Added
+- Search parameters have left the input line. Typing ~QUERY -- key=value~ still works, so a keybinding you already have keeps doing what it did, but it is no longer how the package is used or documented: type the query, press ~C-c~ and a letter to shape the search from inside the session, and read the prompt to see what is set. ~consult-hn-transient~ sets the same parameters instead of building an input string.
+- Paging is bounded. At most ~consult-hn-max-pages~ (10) pages of ~consult-hn-hits-per-page~ (100), where the package used to follow the endpoint's page count wherever it led, twenty items at a time. A broad search now costs ten requests instead of fifty for the same thousand items, and a very broad one stops instead of grinding.
+- Comments under a candidate are capped at ~consult-hn-max-comment-lines~ (2) with an ellipsis, and ~vertico-count~ is scaled for the session, so one long comment no longer pushes the minibuffer to dozens of lines.
+- ~consult-hn~ takes a query and parameters from Lisp, e.g. ~(consult-hn "emacs" :type 'story :points 100)~.
+- ~consult-hn-initial-input-string~ is obsolete. Pass the arguments instead; it still works meanwhile.
+- Embark does more than exit the session: ~b b~ opens the item with ~consult-hn-browse-fn~, ~b o~ in a web browser, ~b e~ in eww, and ~w~ copies its Hacker News url.
+- Fixes: a superseded search can no longer land its pages in the results, items the endpoint repeats across pages are dropped, the Embark registration no longer depends on Embark having loaded first, and the package byte-compiles clean on Emacs 31.
+
+
