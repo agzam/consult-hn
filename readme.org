@@ -152,5 +152,4 @@ Be careful though - these reach the endpoint on every search and show up nowhere
 
 ** Miscellaneous considerations
 
-A search pages results in until it runs out or hits ~consult-hn-max-pages~, ten by default, asking for ~consult-hn-hits-per-page~ items at a time, a hundred by default. A thousand items is more than anybody scrolls through, and the endpoint hands over a large page as readily as a small one, so a broad query costs ten requests where twenty-per-page would have cost fifty. Lower ~consult-hn-hits-per-page~ on a slow link, and raise ~consult-hn-max-pages~ if you really do want everything. Algolia's API has daily usage limits; specific search terms and an early jump into an Embark Collect buffer are the way to stay clear of them.
-
+A search fetches results page by page until it runs out or reaches ~consult-hn-max-pages~ (10 by default), requesting ~consult-hn-hits-per-page~ items per page (100 by default). That's up to a thousand items - more than anyone scrolls through. Since the API returns a large page as cheaply as a small one, big pages mean fewer requests: 10 instead of 50 at twenty per page. On a slow connection, lower ~consult-hn-hits-per-page~; if you truly want everything, raise ~consult-hn-max-pages~. Algolia's API has daily usage limits, so use specific search terms and jump into an Embark Collect buffer early to avoid hitting them.
