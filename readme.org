@@ -134,7 +134,7 @@ If you're using [[https://github.com/thanhvg/emacs-hnreader][hnreader]], you may
   (consult-hn "emacs" :type 'story :points 100))
 #+end_src
 
-The keywords are ~:type~ (~all~, ~story~, ~comment~), ~:author~, ~:points~, ~:comments~, ~:range~ (~all~, ~24h~, ~week~, ~month~, ~year~), ~:front-page~, ~:url-match~ and ~:sort~ (~nil~, ~date~, ~relevance~). They hold for that call alone and leave the state the interactive command carries between sessions alone.
+The keywords are ~:type~ (~all~, ~story~, ~comment~), ~:author~, ~:points~, ~:comments~, ~:range~ (~all~, ~24h~, ~week~, ~month~, ~year~), ~:front-page~, ~:url-match~ and ~:sort~ (~nil~, ~date~, ~relevance~). They describe the whole search: what they leave out is at its default, not at whatever the last session was shaped into, and they do not outlive the call. A query alone, as in ~(consult-hn "emacs")~, starts where the last session left off, like the interactive command.
 
 /A caveat about the front page: HN orders it with a proprietary algorithm the API does not expose, so what you get will not be in exactly the order the site shows./
 

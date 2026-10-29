@@ -3,6 +3,10 @@
 
 All notable changes to this project will be documented in this file.
 
+* [Unreleased]
+** Fixed
+- A call from Lisp with parameters, such as ~(consult-hn url :url-match t)~, starts from the defaults rather than from the state the last session left behind, so an author set in the transient no longer narrows a search for who discussed a link. A call with a query alone still starts where the last session left off.
+
 * [1.1.0] - 2026-08-12
 ** Added
 - Search parameters have left the input line. Typing ~QUERY -- key=value~ still works, so a keybinding you already have keeps doing what it did, but it is no longer how the package is used or documented: type the query, press ~C-c~ and a letter to shape the search from inside the session, and read the prompt to see what is set. ~consult-hn-transient~ sets the same parameters instead of building an input string.

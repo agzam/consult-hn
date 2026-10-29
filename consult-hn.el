@@ -105,9 +105,12 @@ scrolls to."
 (defvar consult-hn--history nil
   "History of queries for `consult-hn'.")
 
-(defvar consult-hn--params
+(defconst consult-hn--default-params
   '(:query nil :type all :author nil :points nil :comments nil
     :range all :front-page nil :url-match nil :sort nil)
+  "The parameter state nothing has shaped yet.")
+
+(defvar consult-hn--params (copy-sequence consult-hn--default-params)
   "Search parameters, the single source of truth for a request.
 Keys: `:query' string, `:type' one of `all', `story', `comment',
 `:author' string, `:points' and `:comments' integers, `:range' one of
@@ -777,15 +780,14 @@ it says."
     merged))
 
 (defun consult-hn (&optional query &rest params)
-  "Consult interface for searching on Hacker News.
-QUERY is what the session starts with, for calling this from Lisp or
-from a keybinding.  PARAMS are keywords from the parameter model,
-`:type' `:author' `:points' `:comments' `:range' `:front-page'
-`:url-match' `:sort', which hold for this call only and do not outlive
-it.  Called interactively it takes neither, and the session inherits
-whatever the last one was shaped into."
+  "Search Hacker News, starting the session on QUERY.
+PARAMS are keywords from `consult-hn--param-keys'.  Without them the
+session starts where the last one left off; with them it starts from the
+defaults, and nothing the call sets outlives it."
   (interactive)
-  (let* ((consult-hn--params (consult-hn--params-merge consult-hn--params params))
+  (let* ((consult-hn--params (consult-hn--params-merge
+                              (if params consult-hn--default-params consult-hn--params)
+                              params))
          (initial (or query (plist-get consult-hn--params :query)
                       (with-suppressed-warnings
                           ((obsolete consult-hn-initial-input-string))

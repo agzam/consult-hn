@@ -722,28 +722,37 @@ unchanged text reaches the pipeline through the handle or not at all."
                  (funcall k))))))))))))
 
 (defun consult-hn-e2e--scenario-from-lisp (k)
-  "A session opened with parameters from Lisp runs under them, once."
+  "A session opened with parameters from Lisp runs under them, once.
+It runs under nothing else either: the author an earlier session left
+in the state stays out of it."
   (consult-hn-e2e--reset)
-  (run-at-time 0 nil #'consult-hn "emacs lisp" :type 'comment :points 100)
-  (consult-hn-e2e--await
-   "S11 the session opens already parameterised"
-   (lambda () (seq-some (lambda (c) (string-match-p "Tagged comment" c))
-                        (consult-hn-e2e--candidates)))
-   (lambda (_)
-     (consult-hn-e2e--check
-      "S11 the prompt says what it was opened with"
-      (equal (consult-hn-e2e--chips) " [comment · >100p]")
-      (format "%S" (consult-hn-e2e--chips)))
-     (consult-hn-e2e--keys "C-g")
-     (consult-hn-e2e--await
-      "S11 session closes on abort"
-      (lambda () (zerop (minibuffer-depth)))
-      (lambda (_)
-        (consult-hn-e2e--check
-         "S11 the call's parameters did not outlive the call"
-         (equal consult-hn--params consult-hn-e2e--default-params)
-         (format "%S" consult-hn--params))
-        (funcall k))))))
+  (let ((carried (plist-put (copy-sequence consult-hn--params) :author "pg")))
+    (setq consult-hn--params carried)
+    (run-at-time 0 nil #'consult-hn "emacs lisp" :type 'comment :points 100)
+    (consult-hn-e2e--await
+     "S11 the session opens already parameterised"
+     (lambda () (seq-some (lambda (c) (string-match-p "Tagged comment" c))
+                          (consult-hn-e2e--candidates)))
+     (lambda (_)
+       (consult-hn-e2e--check
+        "S11 the prompt says what it was opened with"
+        (equal (consult-hn-e2e--chips) " [comment · >100p]")
+        (format "%S" (consult-hn-e2e--chips)))
+       (let ((url (car (last consult-hn-e2e--requests))))
+         (consult-hn-e2e--check
+          "S11 the author the state carried stayed out of the request"
+          (equal (consult-hn-e2e--url-tags url) "comment")
+          (format "%S" (consult-hn-e2e--url-tags url))))
+       (consult-hn-e2e--keys "C-g")
+       (consult-hn-e2e--await
+        "S11 session closes on abort"
+        (lambda () (zerop (minibuffer-depth)))
+        (lambda (_)
+          (consult-hn-e2e--check
+           "S11 the call's parameters did not outlive the call"
+           (equal consult-hn--params carried)
+           (format "%S" consult-hn--params))
+          (funcall k)))))))
 
 (defun consult-hn-e2e--scenario-transient (k)
   "The menu opens a session under the parameters it was set to.

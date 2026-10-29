@@ -701,6 +701,23 @@ Reads the keyword outside any expectation; see `consult-hn-tests--typed'."
               :not :to-equal before)
       (expect consult-hn--params :to-equal before)))
 
+  (it "runs a call with parameters on them and the defaults alone"
+    ;; an author an earlier session left in the state must not ride
+    ;; along into a search for who discussed a url
+    (let ((consult-hn--params (consult-hn-tests--params :author "pg" :range 'week)))
+      (consult-hn "https://example.com/post" :url-match t)
+      (expect (plist-get consult-hn-tests--read-args :params)
+              :to-equal (plist-put (copy-sequence consult-hn--default-params)
+                                   :url-match t))
+      (expect (url-unhex-string (plist-get consult-hn-tests--read-args :url))
+              :not :to-match "author_pg")))
+
+  (it "keeps the carried state for a call with a query alone"
+    (let ((consult-hn--params (consult-hn-tests--params :author "pg")))
+      (consult-hn "emacs")
+      (expect (plist-get (plist-get consult-hn-tests--read-args :params) :author)
+              :to-equal "pg")))
+
   (it "refuses a parameter the model does not have"
     (expect (consult-hn "emacs" :zop 1) :to-throw 'user-error))
 
